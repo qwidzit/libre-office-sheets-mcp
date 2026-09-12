@@ -104,7 +104,7 @@ document stays exactly where it is.
 | `calc_status` | Connection, open documents, sheets and their used ranges. Start here. |
 | `open_document` | Open a file, or create a new empty spreadsheet. |
 | `save_document` | Save in place, or save a copy as ods / xlsx / xls / csv / pdf / html. |
-| `read_range` | Read cells as a tab-separated grid, optionally with formulas. |
+| `read_range` | Read cells as a tab-separated grid, optionally with formulas, optionally only the rows a filter leaves visible. |
 | `write_range` | Write values and formulas. Sizes the block from the data. |
 | `clear_range` | Clear contents, formatting, or both. |
 | `recalculate` | Force formula recalculation. |
@@ -113,6 +113,7 @@ document stays exactly where it is.
 | `sort_range` | Multi-key sort, by column letter or header name. |
 | `find_cells` | Find matching cells, with regex support. |
 | `find_replace` | Replace across a range, a sheet, or the document. |
+| `filter_range` | Filter a table by criteria, clear a filter, or toggle AutoFilter dropdowns. |
 | `format_range` | Font, colours, alignment, wrapping, number formats, borders, merging. |
 | `size_cells` | Column widths, row heights, fit-to-contents, hide and show. |
 | `freeze_panes` | Freeze header rows and columns. |
@@ -125,6 +126,10 @@ area.
 
 ## Things worth knowing
 
+**Formulas work, including multi-argument ones.** Anything starting with `=`
+is entered as a formula -- `IF`, `VLOOKUP`, `SUMIF`, `COUNTIF`, `CONCATENATE`,
+`SUBTOTAL`, nested calls and so on.
+
 **Formula argument separators are handled for you.** LibreOffice's API grammar
 separates arguments with `;`, and a comma-separated call like
 `=DATE(2026,3,15)` does not raise an error there -- it silently evaluates to
@@ -132,6 +137,20 @@ separates arguments with `;`, and a comma-separated call like
 so both styles work, and it tells you when it did. After writing formulas it
 recalculates and reports any cells that ended up as `#REF!`, `#NAME?`,
 `#DIV/0!` and so on, rather than leaving you to notice.
+
+**Filtering hides rows, it does not delete them.** `filter_range` applies
+criteria (`Qty > 5`, `Region equals North`, `Item begins_with B`, `top_values 3`,
+`empty` ...), combines them with `match: "all"` or `"any"`, and reports how many
+rows are left showing. `read_range` with `visible_only: true` then reads back
+exactly what the user sees, keeping the sheet's real row numbers, so a filtered
+table reads back as `2 4 5 6` rather than being silently renumbered. A plain
+`read_range` still returns every row, and `calc_status` marks a filtered sheet so
+neither of you is misled by the window showing fewer rows than the data holds.
+`operation: "show_dropdowns"` turns on Calc's AutoFilter arrows so you can carry
+on filtering by hand afterwards.
+
+Formulas see filters the way Calc does: `SUM` covers every row, `SUBTOTAL(109,...)`
+only the visible ones.
 
 **Undo mostly works, with one documented gap.** Every change goes onto
 LibreOffice's own undo stack and a whole written block is a single Ctrl+Z. The
@@ -194,14 +213,16 @@ LibreOffice needed:
 & "C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_protocol.py
 ```
 
-`scripts/smoke_calc.py` and `scripts/smoke_extras.py` drive the server end to end
-against a live LibreOffice: reading, writing, formulas, formatting, sorting,
-charts, saving, reopening, date conversion and undo. They need LibreOffice
-listening on the UNO socket, and they create and close their own documents.
+`scripts/smoke_calc.py`, `scripts/smoke_extras.py` and `scripts/smoke_filter.py`
+drive the server end to end against a live LibreOffice: reading, writing,
+formulas, formatting, sorting, filtering, charts, saving, reopening, date
+conversion and undo. They need LibreOffice listening on the UNO socket, and they
+create and close their own documents.
 
 ```powershell
 & "C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_calc.py
 & "C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_extras.py
+& "C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_filter.py
 ```
 
 ## Layout
@@ -216,7 +237,7 @@ locmcp/
   convert.py           A1 parsing, value conversion, output formatting
   tools/
     core.py            status, open/save, read/write/clear, recalculate
-    edit.py            rows and columns, sheets, sort, find, replace
+    edit.py            rows and columns, sheets, sort, filter, find, replace
     style.py           formatting, sizing, freeze, charts, raw UNO
 scripts/               setup check, launcher, test suites
 ```

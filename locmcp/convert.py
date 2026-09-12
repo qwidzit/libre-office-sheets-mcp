@@ -209,27 +209,41 @@ def cell_text(value):
     return text.replace("\t", "\\t").replace("\r\n", "\\n").replace("\n", "\\n").replace("\r", "\\n")
 
 
-def to_tsv(grid, spec, sheet_name):
+def _row_labels(grid, spec, row_numbers):
+    """1-based sheet row numbers for each rendered row."""
+    if row_numbers is not None:
+        return [str(n + 1) for n in row_numbers]
+    return [str(spec.start_row + r + 1) for r in range(len(grid))]
+
+
+def _title(grid, spec, sheet_name, row_numbers):
+    if row_numbers is not None:
+        return "%s.%s  (%d of %d rows x %d cols)" % (
+            sheet_name, spec.name(), len(grid), spec.rows, spec.cols)
+    return "%s.%s  (%d rows x %d cols)" % (sheet_name, spec.name(), spec.rows, spec.cols)
+
+
+def to_tsv(grid, spec, sheet_name, row_numbers=None):
     """Render a 2D grid as a tab-separated block with spreadsheet coordinates."""
     header = ["#"] + [index_to_col(spec.start_col + i) for i in range(spec.cols)]
+    labels = _row_labels(grid, spec, row_numbers)
     lines = ["\t".join(header)]
     for r, row in enumerate(grid):
-        cells = [str(spec.start_row + r + 1)]
+        cells = [labels[r]]
         cells.extend(cell_text(v) for v in row)
         lines.append("\t".join(cells))
-    title = "%s.%s  (%d rows x %d cols)" % (sheet_name, spec.name(), spec.rows, spec.cols)
-    return title + "\n" + "\n".join(lines)
+    return _title(grid, spec, sheet_name, row_numbers) + "\n" + "\n".join(lines)
 
 
-def to_markdown(grid, spec, sheet_name):
+def to_markdown(grid, spec, sheet_name, row_numbers=None):
     header = ["#"] + [index_to_col(spec.start_col + i) for i in range(spec.cols)]
+    labels = _row_labels(grid, spec, row_numbers)
     lines = ["| " + " | ".join(header) + " |", "|" + "|".join(["---"] * len(header)) + "|"]
     for r, row in enumerate(grid):
-        cells = [str(spec.start_row + r + 1)]
+        cells = [labels[r]]
         cells.extend(cell_text(v).replace("|", "\\|") for v in row)
         lines.append("| " + " | ".join(cells) + " |")
-    title = "%s.%s  (%d rows x %d cols)" % (sheet_name, spec.name(), spec.rows, spec.cols)
-    return title + "\n" + "\n".join(lines)
+    return _title(grid, spec, sheet_name, row_numbers) + "\n" + "\n".join(lines)
 
 
 def normalise_formula(text):

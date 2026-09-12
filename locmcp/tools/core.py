@@ -5,7 +5,7 @@ import os
 from .. import convert
 from ..bridge import (
     CalcError, calc_documents, cell_range, doc_label, doc_path, null_date, prop,
-    set_active_document, to_file_url, undo_step, with_reconnect,
+    set_active_document, to_file_url, undo_step, visible_rows, with_reconnect,
 )
 from ..registry import DOCUMENT, SHEET, array, boolean, enum, integer, string, tool
 from .base import bool_arg, check_size, describe_used, doc_only, int_arg, target
@@ -223,6 +223,10 @@ def _date_columns(doc, sheet, spec, data):
             "Also list the formula behind every formula cell. Default false."
         ),
         "format": enum("Output layout. Default tsv.", ["tsv", "markdown", "json"]),
+        "visible_only": boolean(
+            "Skip rows hidden by a filter, so you read back exactly what the user "
+            "sees. Default false."
+        ),
         "max_rows": integer("Stop after this many rows. Default 500."),
     },
     title="Read range",
@@ -256,6 +260,16 @@ def read_range(args):
             out.append(value)
         grid.append(out)
 
+    row_numbers = None
+    hidden = 0
+    if bool_arg(args, "visible_only"):
+        shown = visible_rows(rng)
+        if shown is not None:
+            kept = [r for r in range(spec.rows) if (spec.start_row + r) in shown]
+            hidden = spec.rows - len(kept)
+            grid = [grid[r] for r in kept]
+            row_numbers = [spec.start_row + r for r in kept]
+
     layout = (args.get("format") or "tsv").lower()
     if layout == "json":
         import json
@@ -263,17 +277,21 @@ def read_range(args):
             {
                 "sheet": sheet.Name,
                 "range": spec.name(),
-                "rows": spec.rows,
+                "rows": len(grid),
                 "cols": spec.cols,
+                "row_numbers": [n + 1 for n in row_numbers] if row_numbers else None,
                 "values": [[convert.cell_text(v) for v in row] for row in grid],
             },
             ensure_ascii=False,
             indent=1,
         )
     elif layout == "markdown":
-        body = convert.to_markdown(grid, spec, sheet.Name)
+        body = convert.to_markdown(grid, spec, sheet.Name, row_numbers)
     else:
-        body = convert.to_tsv(grid, spec, sheet.Name)
+        body = convert.to_tsv(grid, spec, sheet.Name, row_numbers)
+
+    if hidden:
+        body += "\n\n(%d row(s) hidden by a filter were skipped.)" % hidden
 
     if bool_arg(args, "include_formulas"):
         formulas = rng.getFormulaArray()

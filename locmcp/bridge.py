@@ -359,6 +359,23 @@ def cell_range(sheet, spec):
     )
 
 
+def visible_rows(rng):
+    """Absolute indices of the rows in `rng` that are not hidden by a filter.
+
+    queryVisibleCells answers in one call, rather than asking each row whether
+    it is visible.
+    """
+    try:
+        found = rng.queryVisibleCells()
+    except Exception:
+        return None
+    rows = set()
+    for index in range(found.getCount()):
+        addr = found.getByIndex(index).RangeAddress
+        rows.update(range(addr.StartRow, addr.EndRow + 1))
+    return rows
+
+
 def null_date(doc):
     try:
         nd = doc.getPropertyValue("NullDate")

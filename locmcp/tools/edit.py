@@ -3,9 +3,52 @@
 from .. import convert
 from ..bridge import (
     CalcError, cell_range, make_struct, resolve_sheet, typed_any, undo_step,
+    uno_module, visible_rows,
 )
 from ..registry import DOCUMENT, SHEET, array, boolean, enum, integer, string, tool
 from .base import bool_arg, describe_used, doc_and_sheet, doc_only, int_arg, target
+
+
+def header_map(sheet, spec, has_header):
+    """Lower-cased header text -> column offset within the range."""
+    if not has_header:
+        return {}
+    header_row = cell_range(
+        sheet,
+        convert.RangeSpec(spec.start_col, spec.start_row, spec.end_col, spec.start_row),
+    ).getDataArray()[0]
+    headers = {}
+    for index, value in enumerate(header_row):
+        text = convert.cell_text(value).strip().lower()
+        if text:
+            headers.setdefault(text, index)
+    return headers
+
+
+def column_offset(raw, headers, spec, what):
+    """Resolve a header name, column letter or 0-based index to a range offset."""
+    raw = "" if raw is None else str(raw).strip()
+    if not raw:
+        raise CalcError("Every %s key needs a 'column'." % what)
+    if raw.lower() in headers:
+        offset = headers[raw.lower()]
+    elif raw.isdigit():
+        offset = int(raw)
+    elif raw.isalpha() and len(raw) <= 3:
+        offset = convert.col_to_index(raw) - spec.start_col
+    else:
+        known = ", ".join(sorted(headers)) if headers else "none read"
+        raise CalcError(
+            "Cannot resolve %s column %r. Use a column letter, a 0-based index "
+            "within the range, or a header name (headers here: %s)."
+            % (what, raw, known)
+        )
+    if not (0 <= offset < spec.cols):
+        raise CalcError(
+            "%s column %r resolves outside the range %s."
+            % (what.capitalize(), raw, spec.name())
+        )
+    return offset
 
 
 @tool(
@@ -187,40 +230,13 @@ def sort_range(args):
     if not keys:
         raise CalcError("'by' needs at least one sort key.")
 
-    headers = {}
-    if has_header:
-        header_row = cell_range(
-            sheet,
-            convert.RangeSpec(spec.start_col, spec.start_row, spec.end_col, spec.start_row),
-        ).getDataArray()[0]
-        for i, value in enumerate(header_row):
-            text = convert.cell_text(value).strip().lower()
-            if text:
-                headers.setdefault(text, i)
+    headers = header_map(sheet, spec, has_header)
 
     fields = []
     described = []
     for key in keys:
-        raw = str(key.get("column", "")).strip()
-        if not raw:
-            raise CalcError("Every sort key needs a 'column'.")
-        lowered = raw.lower()
-        if lowered in headers:
-            offset = headers[lowered]
-        elif raw.isdigit():
-            offset = int(raw)
-        else:
-            try:
-                offset = convert.col_to_index(raw) - spec.start_col
-            except ValueError:
-                raise CalcError(
-                    "Cannot resolve sort column %r. Use a column letter, a 0-based "
-                    "index, or a header name." % raw
-                )
-        if not (0 <= offset < spec.cols):
-            raise CalcError(
-                "Sort column %r resolves outside the range %s." % (raw, spec.name())
-            )
+        offset = column_offset(key.get("column"), headers, spec, "sort")
+        raw = str(key.get("column")).strip()
         ascending = not bool(key.get("descending"))
         fields.append(
             make_struct(
@@ -366,3 +382,215 @@ def find_replace(args):
     return "Replaced %r with %r in %d cell(s) across %s." % (
         args["query"], args["replacement"], count, scope,
     )
+
+
+# com.sun.star.sheet.FilterOperator2, by the name a person would reach for.
+FILTER_OPERATORS = {
+    "equals": "EQUAL",
+    "not_equals": "NOT_EQUAL",
+    "greater": "GREATER",
+    "greater_equal": "GREATER_EQUAL",
+    "less": "LESS",
+    "less_equal": "LESS_EQUAL",
+    "contains": "CONTAINS",
+    "not_contains": "DOES_NOT_CONTAIN",
+    "begins_with": "BEGINS_WITH",
+    "not_begins_with": "DOES_NOT_BEGIN_WITH",
+    "ends_with": "ENDS_WITH",
+    "not_ends_with": "DOES_NOT_END_WITH",
+    # LibreOffice 24.2 returns non-blank rows for both FilterOperator2.EMPTY and
+    # NOT_EMPTY, so these map onto comparisons against an empty string, which
+    # behave correctly for text and numeric columns alike.
+    "empty": "EQUAL",
+    "not_empty": "NOT_EQUAL",
+    "top_values": "TOP_VALUES",
+    "bottom_values": "BOTTOM_VALUES",
+    "top_percent": "TOP_PERCENT",
+    "bottom_percent": "BOTTOM_PERCENT",
+}
+VALUELESS_OPERATORS = ("empty", "not_empty")
+
+
+def _filter_constant(name):
+    return uno_module().getConstantByName(
+        "com.sun.star.sheet.FilterOperator2." + FILTER_OPERATORS[name]
+    )
+
+
+def _database_range_name(sheet):
+    safe = "".join(ch if ch.isalnum() else "_" for ch in sheet.Name)
+    return "Claude_Filter_%s" % (safe or "Sheet")
+
+
+def _autofilter(doc, sheet, spec, enable):
+    ranges = doc.DatabaseRanges
+    name = _database_range_name(sheet)
+    address = make_struct(
+        "com.sun.star.table.CellRangeAddress",
+        Sheet=sheet.RangeAddress.Sheet,
+        StartColumn=spec.start_col,
+        StartRow=spec.start_row,
+        EndColumn=spec.end_col,
+        EndRow=spec.end_row,
+    )
+    if enable:
+        if ranges.hasByName(name):
+            # Re-point it, in case the table has grown since last time.
+            ranges.removeByName(name)
+        ranges.addNewByName(name, address)
+        ranges.getByName(name).AutoFilter = True
+        return name
+    if ranges.hasByName(name):
+        ranges.getByName(name).AutoFilter = False
+        ranges.removeByName(name)
+        return name
+    return None
+
+
+@tool(
+    "filter_range",
+    "Filter a table so only matching rows stay visible, clear a filter, or show "
+    "Calc's AutoFilter dropdown arrows. Filtering hides rows rather than deleting "
+    "anything, and read_range with visible_only=true reads back just what is showing.",
+    properties={
+        "document": DOCUMENT,
+        "sheet": SHEET,
+        "range": string(
+            "The table including its header row, e.g. 'A1:D50'. Omit to use the "
+            "sheet's used area."
+        ),
+        "operation": enum(
+            "What to do. Default apply.",
+            ["apply", "clear", "show_dropdowns", "hide_dropdowns"],
+        ),
+        "conditions": array(
+            "Conditions to apply. Each names a column (header name, column letter, "
+            "or 0-based index within the range), an operator, and a value.",
+            {
+                "type": "object",
+                "properties": {
+                    "column": {"type": "string"},
+                    "operator": {"type": "string", "enum": sorted(FILTER_OPERATORS)},
+                    "value": {"type": ["string", "number", "boolean", "null"]},
+                },
+                "required": ["column", "operator"],
+                "additionalProperties": False,
+            },
+        ),
+        "match": enum(
+            "Whether a row must satisfy all conditions or any of them. Default all.",
+            ["all", "any"],
+        ),
+        "has_header": boolean("Treat the first row as headers. Default true."),
+        "regex": boolean("Interpret text values as regular expressions. Default false."),
+        "case_sensitive": boolean("Default false."),
+    },
+    title="Filter table",
+)
+def filter_range(args):
+    conn, doc, sheet, spec = target(args)
+    operation = (args.get("operation") or "apply").lower()
+    has_header = bool_arg(args, "has_header", True)
+    rng = cell_range(sheet, spec)
+
+    if operation in ("show_dropdowns", "hide_dropdowns"):
+        enable = operation == "show_dropdowns"
+        with undo_step(doc, "Claude: autofilter %s.%s" % (sheet.Name, spec.name())):
+            name = _autofilter(doc, sheet, spec, enable)
+        if enable:
+            return (
+                "AutoFilter dropdowns are now on %s.%s, so you or the user can filter "
+                "from the column headers." % (sheet.Name, spec.name())
+            )
+        if name is None:
+            return "There were no AutoFilter dropdowns on sheet '%s' to remove." % sheet.Name
+        return "Removed the AutoFilter dropdowns from sheet '%s'." % sheet.Name
+
+    descriptor = rng.createFilterDescriptor(True)
+    descriptor.ContainsHeader = has_header
+    descriptor.UseRegularExpressions = bool_arg(args, "regex")
+    descriptor.IsCaseSensitive = bool_arg(args, "case_sensitive")
+
+    if operation == "clear":
+        with undo_step(doc, "Claude: clear filter %s.%s" % (sheet.Name, spec.name())):
+            descriptor.setFilterFields2(())
+            rng.filter(descriptor)
+        return "Cleared the filter on %s.%s; every row is visible again." % (
+            sheet.Name, spec.name()
+        )
+
+    conditions = args.get("conditions") or []
+    if not conditions:
+        raise CalcError(
+            "'conditions' is required to apply a filter. To remove one, call this "
+            "with operation='clear'."
+        )
+
+    headers = header_map(sheet, spec, has_header)
+    connection = "OR" if (args.get("match") or "all").lower() == "any" else "AND"
+    fields = []
+    described = []
+    for index, condition in enumerate(conditions):
+        operator = str(condition.get("operator") or "equals").lower()
+        if operator not in FILTER_OPERATORS:
+            raise CalcError(
+                "Unknown operator %r. Choose from: %s"
+                % (operator, ", ".join(sorted(FILTER_OPERATORS)))
+            )
+        offset = column_offset(condition.get("column"), headers, spec, "filter")
+        value = condition.get("value")
+        if operator not in VALUELESS_OPERATORS and value is None:
+            raise CalcError("Operator %r needs a 'value'." % operator)
+
+        field = make_struct(
+            "com.sun.star.sheet.TableFilterField2",
+            Field=offset,
+            Operator=_filter_constant(operator),
+            # The first field's Connection is ignored; the rest chain with it.
+            Connection=uno_module().Enum(
+                "com.sun.star.sheet.FilterConnection", "AND" if index == 0 else connection
+            ),
+        )
+        if operator in VALUELESS_OPERATORS:
+            field.IsNumeric = False
+            field.StringValue = ""  # with EQUAL / NOT_EQUAL, this tests blankness
+        elif isinstance(value, bool):
+            field.IsNumeric = True
+            field.NumericValue = 1.0 if value else 0.0
+        elif isinstance(value, (int, float)):
+            field.IsNumeric = True
+            field.NumericValue = float(value)
+        else:
+            field.IsNumeric = False
+            field.StringValue = str(value)
+        fields.append(field)
+
+        letter = convert.index_to_col(spec.start_col + offset)
+        raw = str(condition.get("column")).strip()
+        label = letter if raw.lower() == letter.lower() else "%s (%s)" % (raw, letter)
+        described.append(
+            "%s %s" % (label, operator) if operator in VALUELESS_OPERATORS
+            else "%s %s %r" % (label, operator, value)
+        )
+
+    with undo_step(doc, "Claude: filter %s.%s" % (sheet.Name, spec.name())):
+        descriptor.setFilterFields2(tuple(fields))
+        rng.filter(descriptor)
+
+    joiner = " AND " if connection == "AND" else " OR "
+    summary = "Filtered %s.%s where %s." % (sheet.Name, spec.name(), joiner.join(described))
+
+    shown = visible_rows(rng)
+    if shown is not None:
+        data_rows = spec.rows - (1 if has_header else 0)
+        visible_data = len([r for r in shown if not (has_header and r == spec.start_row)])
+        summary += " %d of %d data rows are now visible (%d hidden)." % (
+            visible_data, data_rows, data_rows - visible_data
+        )
+        if visible_data == 0:
+            summary += " Nothing matched -- check the values, or clear the filter."
+    summary += (
+        " Rows are hidden, not deleted; read_range with visible_only=true returns "
+        "only what is showing."
+    )
+    return summary

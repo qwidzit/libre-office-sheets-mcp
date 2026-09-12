@@ -3,7 +3,7 @@
 from .. import convert
 from ..bridge import (
     CalcError, cell_range, connect, resolve_document, resolve_range,
-    resolve_sheet, used_range, with_reconnect,
+    resolve_sheet, used_range, visible_rows, with_reconnect,
 )
 
 MAX_CELLS = 50000
@@ -76,7 +76,13 @@ def describe_used(sheet):
     cell = sheet.getCellByPosition(spec.start_col, spec.start_row)
     if spec.cells == 1 and cell.getType().value == "EMPTY":
         return "empty"
-    return "%s (%d rows x %d cols)" % (spec.name(), spec.rows, spec.cols)
+    text = "%s (%d rows x %d cols)" % (spec.name(), spec.rows, spec.cols)
+    # A filtered sheet shows fewer rows than it holds; say so, or a reader will
+    # wonder why the window and the data disagree.
+    shown = visible_rows(cell_range(sheet, spec))
+    if shown is not None and len(shown) < spec.rows:
+        text += " -- FILTERED, %d of %d rows visible" % (len(shown), spec.rows)
+    return text
 
 
 __all__ = [
