@@ -10,7 +10,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 print("interpreter : %s" % sys.executable)
+print("  is a file : %s" % (os.path.isfile(sys.executable) if sys.executable else "n/a"))
 print("version     : %s" % sys.version.split()[0])
+print("prefix      : %s" % getattr(sys, "prefix", ""))
 
 try:
     import uno  # noqa: F401
@@ -23,12 +25,24 @@ except ImportError as exc:
 
 from locmcp import bridge  # noqa: E402
 
+
+def _spawnable():
+    try:
+        bridge.find_interpreter()
+        return True
+    except Exception:
+        return False
+
+print("spawnable   : %s" % (bridge.find_interpreter()
+                            if _spawnable() else "NONE FOUND"))
+print("search dirs : %s" % ", ".join(bridge.interpreter_dirs()))
+
 found = bridge._soffice_path()
 print("soffice     : %s" % (found or "NOT FOUND"))
+print("\nsoffice candidates, in order:")
+for candidate in bridge._soffice_candidates():
+    print("   [%s] %s" % ("x" if os.path.exists(candidate) else " ", candidate))
 if not found:
-    print("\nLooked in:")
-    for candidate in bridge._soffice_candidates():
-        print("   - %s" % candidate)
     print("\nSet LOCALC_MCP_SOFFICE to the full path of soffice if it is elsewhere.")
 print("target      : %s:%d" % (bridge.HOST, bridge.PORT))
 print("autolaunch  : %s" % ("on" if bridge.AUTOLAUNCH else "off"))

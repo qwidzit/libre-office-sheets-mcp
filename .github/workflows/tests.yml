@@ -45,17 +45,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "python.exe cannot import uno" }
           "python=$python" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      # Prints interpreter facts and the soffice candidate list, then exercises
+      # discovery, the detached launch and the UNO connection. First, so its
+      # diagnostics are on record even when a later step fails.
+      - name: Setup check (diagnostics + auto-launch + connect)
+        shell: pwsh
+        run: |
+          & "${{ steps.lo.outputs.python }}" scripts\check-setup.py
+
       # Needs no LibreOffice process, so a failure here is purely the protocol.
       - name: MCP protocol suite
         shell: pwsh
         run: |
           & "${{ steps.lo.outputs.python }}" scripts\smoke_protocol.py
-
-      # Exercises soffice discovery, the detached launch and the UNO connection.
-      - name: Setup check (discovery + auto-launch + connect)
-        shell: pwsh
-        run: |
-          & "${{ steps.lo.outputs.python }}" scripts\check-setup.py
 
       - name: End-to-end suites
         shell: pwsh

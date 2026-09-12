@@ -56,6 +56,72 @@ def uno_module():
 
 # --- launching ---------------------------------------------------------------
 
+def interpreter_dirs():
+    """Directories worth searching, derived from the running interpreter.
+
+    LibreOffice's Windows python.exe is a wrapper: the real interpreter lives in
+    program/python-core-<version>/, and sys.executable does not reliably name a
+    runnable file there. So take the parent of sys.prefix as well, which is the
+    program/ directory holding soffice.exe and the wrapper itself.
+    """
+    dirs = []
+    executable = sys.executable or ""
+    if executable:
+        try:
+            if os.path.isfile(executable):
+                dirs.append(os.path.dirname(os.path.abspath(executable)))
+            elif os.path.isdir(executable):
+                dirs.append(os.path.abspath(executable))
+        except OSError:
+            pass
+    for root in (getattr(sys, "prefix", ""), getattr(sys, "base_prefix", "")):
+        if not root:
+            continue
+        root = os.path.abspath(root)
+        dirs.append(root)
+        dirs.append(os.path.dirname(root))
+
+    ordered = []
+    for directory in dirs:
+        if directory and directory not in ordered:
+            ordered.append(directory)
+    return ordered
+
+
+def find_interpreter():
+    """A Python that can actually be spawned as a subprocess.
+
+    Used by the test suites, which start the server as a child process.
+    sys.executable is not dependable under LibreOffice's Windows wrapper -- it
+    can name something CreateProcess refuses with 'Access is denied' -- so
+    prefer the program/python.exe wrapper, which also sets up the UNO
+    environment that a bare python-core/bin/python.exe would not.
+    """
+    override = os.environ.get("LOCALC_MCP_PYTHON")
+    if override and os.path.isfile(override):
+        return override
+
+    names = ("python.exe",) if os.name == "nt" else ("python3", "python")
+    for directory in interpreter_dirs():
+        for name in names:
+            candidate = os.path.join(directory, name)
+            if os.path.isfile(candidate):
+                return candidate
+        for sub in ("bin", "Scripts"):
+            for name in names:
+                candidate = os.path.join(directory, sub, name)
+                if os.path.isfile(candidate):
+                    return candidate
+
+    if sys.executable and os.path.isfile(sys.executable):
+        return sys.executable
+    raise RuntimeError(
+        "Could not find a Python to spawn (sys.executable=%r, sys.prefix=%r). "
+        "Set LOCALC_MCP_PYTHON to the full path of LibreOffice's python.exe."
+        % (sys.executable, getattr(sys, "prefix", ""))
+    )
+
+
 def _windows_registry_paths():
     """Ask Windows where LibreOffice is, rather than guessing at Program Files.
 
@@ -109,8 +175,8 @@ def _soffice_candidates():
 
     # We are most likely running under LibreOffice's bundled interpreter, so
     # soffice is sitting right next to it.
-    candidates.append(
-        os.path.join(os.path.dirname(os.path.abspath(sys.executable)), exe))
+    for directory in interpreter_dirs():
+        candidates.append(os.path.join(directory, exe))
 
     candidates.extend(_windows_registry_paths())
 

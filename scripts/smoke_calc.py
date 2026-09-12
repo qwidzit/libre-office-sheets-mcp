@@ -14,6 +14,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import direct_uno  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from locmcp.bridge import find_interpreter  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.environ.get("SMOKE_OUT", "/tmp/calc-smoke")
 
@@ -22,7 +25,7 @@ class Client(object):
     def __init__(self):
         env = dict(os.environ, LOCALC_MCP_ENABLE_EXEC="1")
         self.proc = subprocess.Popen(
-            [sys.executable, os.path.join(ROOT, "server.py")],
+            [find_interpreter(), os.path.join(ROOT, "server.py")],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             text=True, bufsize=1, env=env,
         )

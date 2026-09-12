@@ -10,11 +10,14 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from locmcp.bridge import find_interpreter  # noqa: E402
 
 
 def main():
     proc = subprocess.Popen(
-        [sys.executable, os.path.join(ROOT, "server.py")],
+        [find_interpreter(), os.path.join(ROOT, "server.py")],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, bufsize=1, env=dict(os.environ, LOCALC_MCP_AUTOLAUNCH="0", LOCALC_MCP_PORT="2999"),
     )
