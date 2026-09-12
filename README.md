@@ -1,5 +1,7 @@
 # LibreOffice Calc MCP server
 
+[![tests](https://github.com/qwidzit/libre-office-sheets-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/qwidzit/libre-office-sheets-mcp/actions/workflows/tests.yml)
+
 An MCP server that lets Claude read and edit a **live** LibreOffice Calc
 spreadsheet. You keep the document open on screen and watch the cells change as
 Claude works.
@@ -26,8 +28,10 @@ rights.
 
 ## Requirements
 
-- Windows with LibreOffice installed (tested against 24.2; earlier 7.x should be
-  fine). macOS and Linux work too -- only the paths differ.
+- Windows with LibreOffice installed. Every suite runs on each push against a
+  real LibreOffice on both `windows-latest` (26.2) and Ubuntu (24.2), so the
+  Windows paths are exercised rather than assumed. macOS should work too --
+  only the paths differ -- but it is not covered by CI.
 - LibreOffice's bundled Python, normally at
   `C:\Program Files\LibreOffice\program\python.exe`.
 
@@ -241,6 +245,9 @@ server logs under `%APPDATA%\Claude\logs\`. The server writes diagnostics to
 stderr, which land there.
 
 ## Tests
+
+Everything below runs in CI on Windows and Linux on every push; the badge at
+the top reports the last run.
 
 `scripts/smoke_protocol.py` checks the MCP wire protocol on its own -- no
 LibreOffice needed:
