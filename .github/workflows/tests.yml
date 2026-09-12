@@ -1,0 +1,99 @@
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows (LibreOffice bundled Python)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LibreOffice
+        run: choco install libreoffice-fresh -y --no-progress
+        shell: pwsh
+
+      # The whole zero-install design rests on LibreOffice shipping a Python
+      # that can import uno. Prove that before anything else.
+      - name: Find LibreOffice's Python and import uno
+        id: lo
+        shell: pwsh
+        run: |
+          $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramW6432) |
+                   Where-Object { $_ } | ForEach-Object { Join-Path $_ 'LibreOffice' }
+          $python = $null
+          foreach ($root in $roots) {
+            $candidate = Join-Path $root 'program\python.exe'
+            if (Test-Path $candidate) { $python = $candidate; break }
+          }
+          if (-not $python) {
+            Write-Host "Searching for python.exe under the LibreOffice install..."
+            foreach ($root in $roots) {
+              if (Test-Path $root) {
+                $hit = Get-ChildItem $root -Recurse -Filter python.exe -ErrorAction SilentlyContinue |
+                       Select-Object -First 1
+                if ($hit) { $python = $hit.FullName; break }
+              }
+            }
+          }
+          if (-not $python) { throw "LibreOffice did not ship a python.exe - the zero-install premise fails on this install." }
+          Write-Host "python.exe: $python"
+          & $python -c "import uno, sys; print('uno imports OK under', sys.version)"
+          if ($LASTEXITCODE -ne 0) { throw "python.exe cannot import uno" }
+          "python=$python" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # Needs no LibreOffice process, so a failure here is purely the protocol.
+      - name: MCP protocol suite
+        shell: pwsh
+        run: |
+          & "${{ steps.lo.outputs.python }}" scripts\smoke_protocol.py
+
+      # Exercises soffice discovery, the detached launch and the UNO connection.
+      - name: Setup check (discovery + auto-launch + connect)
+        shell: pwsh
+        run: |
+          & "${{ steps.lo.outputs.python }}" scripts\check-setup.py
+
+      - name: End-to-end suites
+        shell: pwsh
+        run: |
+          $failed = @()
+          foreach ($suite in @('smoke_calc', 'smoke_extras', 'smoke_filter', 'smoke_course')) {
+            Write-Host "::group::$suite"
+            & "${{ steps.lo.outputs.python }}" "scripts\$suite.py"
+            $code = $LASTEXITCODE
+            Write-Host "::endgroup::"
+            if ($code -ne 0) { $failed += $suite }
+          }
+          if ($failed.Count -gt 0) { throw "failing suites: $($failed -join ', ')" }
+
+  linux:
+    name: Linux (system Python + uno)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LibreOffice Calc and the UNO bindings
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-calc python3-uno xvfb
+
+      - name: MCP protocol suite
+        run: python3 scripts/smoke_protocol.py
+
+      - name: End-to-end suites
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
+          sleep 3
+          export DISPLAY=:99
+          python3 scripts/check-setup.py
+          failed=""
+          for suite in smoke_calc smoke_extras smoke_filter smoke_course; do
+            echo "::group::$suite"
+            python3 "scripts/$suite.py" || failed="$failed $suite"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "failing suites:$failed"; exit 1; fi

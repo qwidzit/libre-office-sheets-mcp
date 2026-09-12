@@ -56,41 +56,112 @@ def uno_module():
 
 # --- launching ---------------------------------------------------------------
 
-def _soffice_path():
-    explicit = os.environ.get("LOCALC_MCP_SOFFICE")
-    if explicit and os.path.exists(explicit):
-        return explicit
+def _windows_registry_paths():
+    """Ask Windows where LibreOffice is, rather than guessing at Program Files.
 
+    Two registrations are worth consulting: the standard App Paths entry for
+    soffice.exe, and the InstallPath the UNO SDK uses. Both are checked in the
+    64- and 32-bit registry views, since a 32-bit LibreOffice on 64-bit Windows
+    lands in the other one.
+    """
+    if os.name != "nt":
+        return []
+    try:
+        import winreg
+    except ImportError:  # pragma: no cover - Windows only
+        return []
+
+    lookups = (
+        (winreg.HKEY_LOCAL_MACHINE,
+         r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\soffice.exe"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\LibreOffice\UNO\InstallPath"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\LibreOffice\UNO\InstallPath"),
+    )
+    views = (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY)
+
+    found = []
+    for root, subkey in lookups:
+        for view in views:
+            try:
+                with winreg.OpenKey(root, subkey, 0, winreg.KEY_READ | view) as key:
+                    value = winreg.QueryValueEx(key, "")[0]
+            except OSError:
+                continue
+            if not value:
+                continue
+            value = str(value).strip().strip('"')
+            # App Paths names the executable; InstallPath names its folder.
+            if value.lower().endswith(".exe"):
+                found.append(value)
+            else:
+                found.append(os.path.join(value, "soffice.exe"))
+    return found
+
+
+def _soffice_candidates():
+    """Every place worth looking for soffice, best guess first."""
     exe = "soffice.exe" if os.name == "nt" else "soffice"
+    candidates = []
+
+    explicit = os.environ.get("LOCALC_MCP_SOFFICE")
+    if explicit:
+        candidates.append(explicit)
+
     # We are most likely running under LibreOffice's bundled interpreter, so
     # soffice is sitting right next to it.
-    sibling = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), exe)
-    if os.path.exists(sibling):
-        return sibling
+    candidates.append(
+        os.path.join(os.path.dirname(os.path.abspath(sys.executable)), exe))
 
-    candidates = [
-        r"C:\Program Files\LibreOffice\program\soffice.exe",
-        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    candidates.extend(_windows_registry_paths())
+
+    # Environment variables rather than a hardcoded C:, which is wrong whenever
+    # Windows or LibreOffice is installed somewhere else.
+    for variable in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        base = os.environ.get(variable)
+        if base:
+            candidates.append(os.path.join(base, "LibreOffice", "program", exe))
+
+    candidates.extend([
         "/Applications/LibreOffice.app/Contents/MacOS/soffice",
         "/usr/bin/soffice",
+        "/usr/local/bin/soffice",
+        "/opt/libreoffice/program/soffice",
         "/usr/lib/libreoffice/program/soffice",
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            return path
+    ])
 
     from shutil import which
-    return which(exe)
+    resolved = which(exe)
+    if resolved:
+        candidates.append(resolved)
+
+    seen = set()
+    ordered = []
+    for candidate in candidates:
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            ordered.append(candidate)
+    return ordered
+
+
+def _soffice_path():
+    for candidate in _soffice_candidates():
+        try:
+            if os.path.exists(candidate):
+                return candidate
+        except OSError:
+            continue
+    return None
 
 
 def _launch():
     path = _soffice_path()
     if not path:
         raise CalcError(
-            "LibreOffice is not running with a UNO socket and soffice could not be "
-            "found automatically. Start it yourself with:\n"
+            "LibreOffice is not running with a UNO socket, and soffice could not be "
+            "found. Looked in:\n  %s\n\nStart LibreOffice yourself with:\n"
             '  soffice --calc --accept="socket,host=%s,port=%d;urp;"\n'
-            "or set LOCALC_MCP_SOFFICE to the full path of soffice." % (HOST, PORT)
+            "or set LOCALC_MCP_SOFFICE to the full path of soffice."
+            % ("\n  ".join(_soffice_candidates()), HOST, PORT)
         )
     args = [
         path,

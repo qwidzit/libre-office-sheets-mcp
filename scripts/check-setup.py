@@ -23,8 +23,15 @@ except ImportError as exc:
 
 from locmcp import bridge  # noqa: E402
 
-print("soffice     : %s" % (bridge._soffice_path() or "NOT FOUND"))
+found = bridge._soffice_path()
+print("soffice     : %s" % (found or "NOT FOUND"))
+if not found:
+    print("\nLooked in:")
+    for candidate in bridge._soffice_candidates():
+        print("   - %s" % candidate)
+    print("\nSet LOCALC_MCP_SOFFICE to the full path of soffice if it is elsewhere.")
 print("target      : %s:%d" % (bridge.HOST, bridge.PORT))
+print("autolaunch  : %s" % ("on" if bridge.AUTOLAUNCH else "off"))
 
 try:
     conn = bridge.connect()
