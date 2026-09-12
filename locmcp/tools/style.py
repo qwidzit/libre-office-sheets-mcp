@@ -36,6 +36,11 @@ def _border_line(color, width_mm100):
         "document": DOCUMENT,
         "sheet": SHEET,
         "range": string("Range to format, e.g. 'A1:D1'."),
+        "style": string(
+            "Named cell style to apply first, e.g. 'Heading 1', 'Good', 'Bad', "
+            "'Neutral', 'Accent 1', 'Result', 'Default'. Anything else you pass is "
+            "applied on top of it."
+        ),
         "bold": boolean("Bold on or off."),
         "italic": boolean("Italic on or off."),
         "underline": boolean("Underline on or off."),
@@ -68,6 +73,17 @@ def format_range(args):
     applied = []
 
     with undo_step(doc, "Claude: format %s.%s" % (sheet.Name, spec.name())):
+        if args.get("style"):
+            available = doc.StyleFamilies.getByName("CellStyles")
+            if not available.hasByName(args["style"]):
+                raise CalcError(
+                    "No cell style named %r. Available: %s"
+                    % (args["style"], ", ".join(sorted(available.ElementNames)))
+                )
+            # A style resets the cell's direct formatting, so it goes on first and
+            # anything else in this call layers over it.
+            rng.CellStyle = args["style"]
+            applied.append("style=%s" % args["style"])
         if "bold" in args:
             rng.CharWeight = 150.0 if bool_arg(args, "bold") else 100.0
             applied.append("bold=%s" % bool_arg(args, "bold"))
@@ -294,6 +310,13 @@ CHART_TYPES = {
         "height_mm": number("Chart height in millimetres. Default 85."),
         "first_row_as_labels": boolean("Use the first row as series names. Default true."),
         "first_column_as_labels": boolean("Use the first column as categories. Default true."),
+        "x_axis_title": string("Label for the horizontal axis."),
+        "y_axis_title": string("Label for the vertical axis."),
+        "legend": enum(
+            "Where to put the legend, or 'none' to hide it. Default right.",
+            ["none", "left", "right", "top", "bottom"]),
+        "data_labels": boolean("Print each point's value on the chart. Default false."),
+        "y_gridlines": boolean("Horizontal gridlines behind the plot. Default true."),
     },
     required=["range"],
     title="Create chart",
@@ -344,6 +367,42 @@ def create_chart(args):
         if args.get("title"):
             chart_doc.HasMainTitle = True
             chart_doc.Title.String = str(args["title"])
+
+        diagram = chart_doc.Diagram
+        # Pie and donut charts have no axes, so these are best-effort.
+        for key, has_flag, title_property in (
+            ("x_axis_title", "HasXAxisTitle", "XAxisTitle"),
+            ("y_axis_title", "HasYAxisTitle", "YAxisTitle"),
+        ):
+            if not args.get(key):
+                continue
+            try:
+                setattr(diagram, has_flag, True)
+                getattr(diagram, title_property).String = str(args[key])
+            except Exception:
+                pass
+
+        placement = (args.get("legend") or "right").lower()
+        try:
+            chart_doc.HasLegend = placement != "none"
+            if placement != "none":
+                chart_doc.Legend.Alignment = _enum(
+                    "com.sun.star.chart.ChartLegendPosition", placement.upper())
+        except Exception:
+            pass
+
+        if bool_arg(args, "data_labels"):
+            try:
+                # com.sun.star.chart.ChartDataCaption.VALUE
+                diagram.DataCaption = 1
+            except Exception:
+                pass
+
+        if "y_gridlines" in args:
+            try:
+                diagram.HasYAxisGrid = bool_arg(args, "y_gridlines")
+            except Exception:
+                pass
 
     return "Created a %s chart named '%s' from %s.%s, anchored at %s." % (
         kind, name, sheet.Name, spec.name(), anchor_spec.name()

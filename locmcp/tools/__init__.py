@@ -1,3 +1,3 @@
 """Importing this package registers every tool."""
 
-from . import core, edit, style  # noqa: F401
+from . import core, data, document, edit, style  # noqa: F401
