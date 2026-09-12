@@ -3,21 +3,19 @@
 
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import direct_uno  # noqa: E402
 from smoke_calc import Client, FAILURES, step  # noqa: E402
 
-OUT_DIR = os.environ.get("SMOKE_OUT", "/tmp/calc-smoke")
+OUT_DIR = os.path.join(tempfile.gettempdir(), "calc-smoke-%d" % os.getpid())
 
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     path = os.path.join(OUT_DIR, "extras.ods")
-    # Start from a known state: a document left open by an earlier suite
-    # would otherwise be picked up as the target.
-    direct_uno.close_all()
     client = Client()
 
     client.call("open_document")
@@ -42,11 +40,11 @@ def main():
     # getAllUndoActionTitles() is newest-first, and undo() must be called from
     # outside any open undo context -- so drive it over a direct UNO connection,
     # which is what pressing Ctrl+Z in the window actually does.
-    before = direct_uno.undo_titles()
+    before = direct_uno.undo_titles_for("Data")
     client.call("write_range", range="D1", values=[
         ["x", 1], ["y", 2], ["z", 3], ["w", 4],
     ])
-    after = direct_uno.undo_titles()
+    after = direct_uno.undo_titles_for("Data")
     step("a multi-cell write is a single undo entry",
          len(after) == len(before) + 1,
          "undo entries went from %d to %d (newest: %r)" % (len(before), len(after), after[:2]))
@@ -60,7 +58,7 @@ def main():
     client.call("write_range", range="D1", values=[
         ["a", 9], ["b", 8], ["c", 7], ["d", 6],
     ])
-    direct_uno.undo()
+    direct_uno.undo_for("Data")
     ok, text = client.call("read_range", range="D1:E4")
     step("one Ctrl+Z restores data an overwrite destroyed",
          ok and "x" in text and "w" in text and "a" not in text.split("\n", 1)[1],
@@ -92,8 +90,16 @@ def main():
     ok, text = client.call("clear_range", range="A5:B5", what="all")
     step("clear a range", ok, text, expect="Cleared all")
 
-    client.call("run_uno_script", code="doc.setModified(False); doc.close(False)")
     client.close()
+
+    # The watchdog is what stands between the user and an indefinite hang when
+    # LibreOffice puts up something modal. Prove it fires rather than trusting it.
+    watchdog = Client({"LOCALC_MCP_TIMEOUT": "3"})
+    ok, text = watchdog.call(
+        "run_uno_script", code="import time\ntime.sleep(30)")
+    step("a call that blocks is reported, not waited on forever",
+         not ok and "did not respond within" in text, text)
+    watchdog.close()
 
     print("\n" + "=" * 60)
     if FAILURES:

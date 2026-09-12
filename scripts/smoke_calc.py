@@ -10,17 +10,17 @@ import os
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-import direct_uno  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from locmcp.bridge import find_interpreter  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_DIR = os.environ.get("SMOKE_OUT", "/tmp/calc-smoke")
+OUT_DIR = os.environ.get(
+    "SMOKE_OUT", os.path.join(tempfile.gettempdir(), "calc-smoke-%d" % os.getpid()))
 
 
 # A UNO call that blocks -- a modal dialog in LibreOffice is the usual cause --
@@ -30,8 +30,9 @@ CALL_TIMEOUT = float(os.environ.get("SMOKE_CALL_TIMEOUT", "120"))
 
 
 class Client(object):
-    def __init__(self):
+    def __init__(self, extra_env=None):
         env = dict(os.environ, LOCALC_MCP_ENABLE_EXEC="1")
+        env.update(extra_env or {})
         self.proc = subprocess.Popen(
             [find_interpreter(), os.path.join(ROOT, "server.py")],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -118,9 +119,6 @@ def step(label, ok, text, expect=None, quiet=False):
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     target = os.path.join(OUT_DIR, "budget.ods")
-    # Start from a known state: a document left open by an earlier suite
-    # would otherwise be picked up as the target.
-    direct_uno.close_all()
     client = Client()
 
     ok, text = client.call("calc_status")
@@ -243,7 +241,6 @@ def main():
     ok, text = client.call("calc_status")
     step("final status", ok, text)
 
-    direct_uno.close_all()
     client.close()
     print("\n" + "=" * 60)
     if FAILURES:

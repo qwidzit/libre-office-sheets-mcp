@@ -1,5 +1,7 @@
 """The MCP layer: initialize handshake, tools/list, tools/call."""
 
+import os
+import threading
 import traceback
 
 from . import __version__, registry
@@ -8,6 +10,12 @@ from .jsonrpc import INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, log
 # Revisions reachable through the `initialize` handshake, oldest to newest.
 HANDSHAKE_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 PREFERRED_VERSION = "2025-06-18"
+
+# LibreOffice services UNO calls on its main thread, so anything modal -- a
+# dialog, a cell left in edit mode -- blocks every call until it is dismissed.
+# A UNO call cannot be interrupted, so run it on a worker and answer without it
+# rather than leaving the client waiting on a reply that may never come.
+CALL_TIMEOUT = float(os.environ.get("LOCALC_MCP_TIMEOUT", "60"))
 
 SERVER_INFO = {
     "name": "libreoffice-calc",
@@ -65,7 +73,7 @@ def _tools_call(params):
         raise RpcError(INVALID_PARAMS, "'arguments' must be an object")
 
     try:
-        text = entry["handler"](arguments)
+        text = _call_with_timeout(entry["handler"], arguments, name)
         is_error = False
     except Exception as exc:
         # Tool-level failures belong in the result so the model can self-correct;
@@ -75,6 +83,30 @@ def _tools_call(params):
         is_error = True
 
     return {"content": [{"type": "text", "text": text}], "isError": is_error}
+
+
+def _call_with_timeout(handler, arguments, name):
+    outcome = {}
+
+    def work():
+        try:
+            outcome["result"] = handler(arguments)
+        except BaseException as exc:  # re-raised on the calling thread
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=work, name="tool-%s" % name, daemon=True)
+    worker.start()
+    worker.join(CALL_TIMEOUT)
+    if worker.is_alive():
+        raise TimeoutError(
+            "LibreOffice did not respond within %.0f seconds. It is almost "
+            "always showing something modal that has to be dealt with in the "
+            "LibreOffice window -- a dialog box, or a cell still in edit mode. "
+            "Dismiss it and try again. (Raise LOCALC_MCP_TIMEOUT if the "
+            "operation is genuinely this slow.)" % CALL_TIMEOUT)
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["result"]
 
 
 def _ping(params):

@@ -7,7 +7,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import direct_uno  # noqa: E402
 from smoke_calc import Client, FAILURES, step  # noqa: E402
 
 
@@ -22,7 +21,6 @@ def cells(text):
 
 
 def main():
-    direct_uno.close_all()
     client = Client()
     client.call("open_document")
     client.call("manage_sheets", operation="rename", name="0", new_name="Sales")
@@ -197,7 +195,6 @@ def main():
     ok, text = client.call("write_range", range="A2", values=[["Widget"]])
     step("writes work again after unprotecting", ok, text, quiet=True)
 
-    direct_uno.close_all()
     client.close()
     print("\n" + "=" * 60)
     if FAILURES:

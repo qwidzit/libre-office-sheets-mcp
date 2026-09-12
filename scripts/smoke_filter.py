@@ -7,7 +7,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import direct_uno  # noqa: E402
 from smoke_calc import Client, FAILURES, step  # noqa: E402
 
 TABLE = [
@@ -32,7 +31,6 @@ def visible_items(text):
 
 
 def main():
-    direct_uno.close_all()
     client = Client()
     client.call("open_document")
     client.call("manage_sheets", operation="rename", name="0", new_name="Stock")
@@ -138,7 +136,6 @@ def main():
          ok and "58" in text and "32" in text, text)
 
     client.call("filter_range", range="A1:D7", operation="clear")
-    direct_uno.close_all()
     client.close()
 
     print("\n" + "=" * 60)

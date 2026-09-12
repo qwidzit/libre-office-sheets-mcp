@@ -211,6 +211,7 @@ All optional, set in the `env` block of the MCP config:
 | `LOCALC_MCP_AUTOLAUNCH` | `1` | Start LibreOffice if it is not reachable. |
 | `LOCALC_MCP_LAUNCH_TIMEOUT` | `45` | Seconds to wait for a launched instance. |
 | `LOCALC_MCP_SOFFICE` | auto | Full path to `soffice.exe`. |
+| `LOCALC_MCP_TIMEOUT` | `60` | Seconds to wait for a call before reporting LibreOffice as unresponsive. |
 | `LOCALC_MCP_ENABLE_EXEC` | `0` | Set to `1` to enable `run_uno_script`. |
 
 `run_uno_script` executes arbitrary Python against your open documents. It is
@@ -227,6 +228,13 @@ socket. Run `scripts\start-libreoffice.ps1`, or set `LOCALC_MCP_AUTOLAUNCH=1`.
 
 **Saving fails with an IO error** -- the target file is usually already open in
 another window, or a `.~lock.<name>#` file is stranded next to it.
+
+**"LibreOffice did not respond"** -- something modal is open in LibreOffice and
+is blocking it. UNO calls are serviced on the main thread, so a dialog box, or
+a cell left in edit mode, stops every one of them. Deal with it in the
+LibreOffice window and try again. The server gives up after 60 seconds rather
+than waiting forever; raise `LOCALC_MCP_TIMEOUT` if an operation is genuinely
+that slow.
 
 **Nothing happens / the server will not start** -- Claude Desktop keeps MCP
 server logs under `%APPDATA%\Claude\logs\`. The server writes diagnostics to
