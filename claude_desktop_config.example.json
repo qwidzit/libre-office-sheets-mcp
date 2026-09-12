@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "libreoffice-calc": {
+      "command": "C:\\Program Files\\LibreOffice\\program\\python.exe",
+      "args": ["C:\\Users\\YOU\\libre-office-sheets-mcp\\server.py"],
+      "env": {
+        "LOCALC_MCP_PORT": "2002",
+        "LOCALC_MCP_AUTOLAUNCH": "1"
+      }
+    }
+  }
+}
