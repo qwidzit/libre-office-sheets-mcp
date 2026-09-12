@@ -105,10 +105,11 @@ def step(label, ok, text, expect=None, quiet=False):
             if needle.lower() not in text.lower():
                 good = False
                 text += "\n  (expected to contain %r)" % needle
-    print("\n%2d. %s %s" % (STEP[0], "PASS" if good else "FAIL", label))
+    print("\n%2d. %s %s" % (STEP[0], "PASS" if good else "FAIL", label), flush=True)
     if not good or not quiet:
         for line in text.splitlines()[:18]:
             print("      " + line)
+        sys.stdout.flush()
     if not good:
         FAILURES.append(label)
     return good

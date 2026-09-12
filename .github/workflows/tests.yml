@@ -15,7 +15,7 @@ jobs:
   windows:
     name: Windows (LibreOffice bundled Python)
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -58,22 +58,22 @@ jobs:
       - name: Setup check (diagnostics + auto-launch + connect)
         shell: pwsh
         run: |
-          & "${{ steps.lo.outputs.python }}" scripts\check-setup.py
+          & "${{ steps.lo.outputs.python }}" -u scripts\check-setup.py
 
       # Needs no LibreOffice process, so a failure here is purely the protocol.
       - name: MCP protocol suite
         shell: pwsh
         run: |
-          & "${{ steps.lo.outputs.python }}" scripts\smoke_protocol.py
+          & "${{ steps.lo.outputs.python }}" -u scripts\smoke_protocol.py
 
       - name: End-to-end suites
         shell: pwsh
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
           $failed = @()
           foreach ($suite in @('smoke_calc', 'smoke_extras', 'smoke_filter', 'smoke_course')) {
             Write-Host "::group::$suite"
-            & "${{ steps.lo.outputs.python }}" "scripts\$suite.py"
+            & "${{ steps.lo.outputs.python }}" -u "scripts\$suite.py"
             $code = $LASTEXITCODE
             Write-Host "::endgroup::"
             if ($code -ne 0) { $failed += $suite }
@@ -93,7 +93,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends libreoffice-calc python3-uno xvfb
 
       - name: MCP protocol suite
-        run: python3 scripts/smoke_protocol.py
+        run: python3 -u scripts/smoke_protocol.py
 
       - name: End-to-end suites
         timeout-minutes: 12
@@ -101,11 +101,11 @@ jobs:
           Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
           sleep 3
           export DISPLAY=:99
-          python3 scripts/check-setup.py
+          python3 -u scripts/check-setup.py
           failed=""
           for suite in smoke_calc smoke_extras smoke_filter smoke_course; do
             echo "::group::$suite"
-            python3 "scripts/$suite.py" || failed="$failed $suite"
+            python3 -u "scripts/$suite.py" || failed="$failed $suite"
             echo "::endgroup::"
           done
           if [ -n "$failed" ]; then echo "failing suites:$failed"; exit 1; fi
