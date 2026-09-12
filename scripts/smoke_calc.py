@@ -7,8 +7,10 @@ Requires LibreOffice already listening:
 
 import json
 import os
+import queue
 import subprocess
 import sys
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -21,6 +23,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.environ.get("SMOKE_OUT", "/tmp/calc-smoke")
 
 
+# A UNO call that blocks -- a modal dialog in LibreOffice is the usual cause --
+# would otherwise hang the suite until CI kills the job hours later, with no
+# indication of which call was responsible.
+CALL_TIMEOUT = float(os.environ.get("SMOKE_CALL_TIMEOUT", "120"))
+
+
 class Client(object):
     def __init__(self):
         env = dict(os.environ, LOCALC_MCP_ENABLE_EXEC="1")
@@ -30,34 +38,59 @@ class Client(object):
             text=True, bufsize=1, env=env,
         )
         self.next_id = 0
+        self._lines = queue.Queue()
+        self._pump = threading.Thread(target=self._read_stdout, daemon=True)
+        self._pump.start()
         self.request("initialize", {
             "protocolVersion": "2025-06-18", "capabilities": {},
             "clientInfo": {"name": "smoke-calc", "version": "0"},
         })
         self.notify("notifications/initialized")
 
+    def _read_stdout(self):
+        try:
+            for line in self.proc.stdout:
+                self._lines.put(line)
+        finally:
+            self._lines.put(None)
+
     def notify(self, method, params=None):
         self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": method,
                                           "params": params or {}}) + "\n")
         self.proc.stdin.flush()
 
-    def request(self, method, params):
+    def request(self, method, params, label=None):
         self.next_id += 1
         self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": self.next_id,
                                           "method": method, "params": params}) + "\n")
         self.proc.stdin.flush()
-        return json.loads(self.proc.stdout.readline())
+        what = label or method
+        try:
+            line = self._lines.get(timeout=CALL_TIMEOUT)
+        except queue.Empty:
+            raise AssertionError(
+                "TIMEOUT: no reply to %s after %.0fs. The server is most likely "
+                "blocked on a UNO call -- a modal LibreOffice dialog will do it. "
+                "The last 'operation:' line on stderr says how far it got."
+                % (what, CALL_TIMEOUT))
+        if line is None:
+            raise AssertionError("The server exited while handling %s." % what)
+        return json.loads(line)
 
     def call(self, _tool, **arguments):
-        reply = self.request("tools/call", {"name": _tool, "arguments": arguments})
+        reply = self.request(
+            "tools/call", {"name": _tool, "arguments": arguments}, label="tool %s" % _tool)
         if "error" in reply:
             return False, json.dumps(reply["error"])
         result = reply["result"]
         return not result.get("isError", False), result["content"][0]["text"]
 
     def close(self):
-        self.proc.stdin.close()
-        self.proc.wait(timeout=10)
+        try:
+            self.proc.stdin.close()
+            self.proc.wait(timeout=10)
+        except Exception:
+            self.proc.kill()
 
 
 FAILURES = []
