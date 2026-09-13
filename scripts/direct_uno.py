@@ -4,7 +4,7 @@ import uno
 
 
 def _documents():
-    """Every open Calc document, in the order LibreOffice enumerates them."""
+    """Every open Calc document. LibreOffice enumerates these newest first."""
     local = uno.getComponentContext()
     resolver = local.ServiceManager.createInstanceWithContext(
         "com.sun.star.bridge.UnoUrlResolver", local)
@@ -24,13 +24,6 @@ def _documents():
     return docs
 
 
-def _document():
-    docs = _documents()
-    if not docs:
-        raise RuntimeError("no spreadsheet open")
-    return docs[-1]
-
-
 def document_with_sheet(name):
     """The newest open document containing a sheet of this name.
 
@@ -38,7 +31,9 @@ def document_with_sheet(name):
     identify the right one by a sheet the suite created rather than by
     position.
     """
-    for doc in reversed(_documents()):
+    # Newest first, so a suite finds the document it just created rather than
+    # one left over from an earlier run.
+    for doc in _documents():
         try:
             if doc.Sheets.hasByName(name):
                 return doc
