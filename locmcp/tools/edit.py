@@ -1,9 +1,11 @@
-"""Structural edits: rows and columns, sheets, sorting, search and replace."""
+"""Structural edits: rows and columns, sheets, sorting, filtering, search."""
+
+import re
 
 from .. import convert
 from ..bridge import (
-    CalcError, cell_range, make_struct, resolve_sheet, typed_any, undo_step,
-    uno_module, visible_rows,
+    CalcError, cell_range, make_struct, resolve_range, resolve_sheet, typed_any,
+    undo_step, uno_module, used_range, visible_rows,
 )
 from ..registry import DOCUMENT, SHEET, array, boolean, enum, integer, string, tool
 from .base import bool_arg, describe_used, doc_and_sheet, doc_only, int_arg, target
@@ -447,6 +449,92 @@ def _autofilter(doc, sheet, spec, enable):
     return None
 
 
+# Calc writes conditions into criteria cells as a comparison prefix followed by
+# a value: ">100", "<>North". Longest prefixes first so ">=" wins over ">".
+CRITERIA_PREFIXES = (
+    (">=", "greater_equal"),
+    ("<=", "less_equal"),
+    ("<>", "not_equals"),
+    (">", "greater"),
+    ("<", "less"),
+    ("=", "equals"),
+)
+MAX_FILTER_FIELDS = 8
+
+
+def _parse_criterion(text):
+    """'>100' -> ('greater', '100'); 'North' -> ('equals', 'North')."""
+    text = text.strip()
+    if not text:
+        return None
+    for prefix, operator in CRITERIA_PREFIXES:
+        if text.startswith(prefix):
+            return operator, text[len(prefix):].strip()
+    return "equals", text
+
+
+def _coerce(raw):
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return raw
+
+
+def criteria_conditions(doc, criteria_ref):
+    """Read a Calc-style criteria block into (condition, starts_a_row) pairs.
+
+    The block's first row names columns; each row beneath holds one set of
+    conditions, ANDed across its columns, and the rows are ORed with each other.
+    That is the layout Calc's own Advanced Filter dialog expects, and it is not
+    reachable through the UNO API -- createFilterDescriptorByObject returns null
+    for a criteria range -- so the block is parsed here instead.
+    """
+    sheet, spec = resolve_range(doc, criteria_ref, None, default_to_used=False)
+    grid = cell_range(sheet, spec).getDataArray()
+    if len(grid) < 2:
+        raise CalcError(
+            "The criteria range %s needs a header row naming the columns and at "
+            "least one row of conditions beneath it." % spec.name())
+
+    names = [convert.cell_text(value).strip() for value in grid[0]]
+    parsed = []
+    for row in grid[1:]:
+        started = False
+        for index, value in enumerate(row):
+            criterion = _parse_criterion(convert.cell_text(value))
+            if criterion is None:
+                continue
+            if index >= len(names) or not names[index]:
+                raise CalcError(
+                    "The criteria block has a condition in a column with no header "
+                    "(column %d of %s)." % (index + 1, spec.name()))
+            operator, raw = criterion
+            parsed.append((
+                {"column": names[index], "operator": operator, "value": _coerce(raw)},
+                not started,
+            ))
+            started = True
+    if not parsed:
+        raise CalcError(
+            "The criteria range %s has a header row but no conditions under it."
+            % spec.name())
+    return parsed
+
+
+def _copied_rows(sheet, anchor, source_spec):
+    """How many rows the filter actually wrote at the destination."""
+    end_row = min(anchor.start_row + source_spec.rows, anchor.start_row + 1000)
+    block = cell_range(sheet, convert.RangeSpec(
+        anchor.start_col, anchor.start_row,
+        anchor.start_col + source_spec.cols - 1, end_row - 1)).getDataArray()
+    count = 0
+    for row in block:
+        if all(convert.cell_text(value) == "" for value in row):
+            break
+        count += 1
+    return count
+
+
 @tool(
     "filter_range",
     "Filter a table so only matching rows stay visible, clear a filter, or show "
@@ -484,6 +572,20 @@ def _autofilter(doc, sheet, spec, enable):
         "has_header": boolean("Treat the first row as headers. Default true."),
         "regex": boolean("Interpret text values as regular expressions. Default false."),
         "case_sensitive": boolean("Default false."),
+        "criteria_range": string(
+            "An advanced filter: a block of cells holding the conditions, laid out "
+            "the way Calc's Advanced Filter expects -- a header row naming columns, "
+            "then one row per set of conditions. Conditions across a row are ANDed, "
+            "separate rows are ORed. Cells may carry a comparison, e.g. '>100' or "
+            "'<>North'. Use instead of 'conditions'."
+        ),
+        "copy_to": string(
+            "Copy the matching rows here instead of hiding the rest, e.g. 'H1' or "
+            "'Results.A1'. The source table is left untouched."
+        ),
+        "unique_only": boolean(
+            "Drop duplicate rows from the result. Default false."
+        ),
     },
     title="Filter table",
 )
@@ -519,18 +621,34 @@ def filter_range(args):
             sheet.Name, spec.name()
         )
 
-    conditions = args.get("conditions") or []
-    if not conditions:
+    # Either an explicit list of conditions, or an advanced filter's criteria
+    # block. Each entry carries whether it starts a new OR group.
+    if args.get("criteria_range"):
+        if args.get("conditions"):
+            raise CalcError(
+                "Give either 'conditions' or 'criteria_range', not both.")
+        entries = criteria_conditions(doc, args["criteria_range"])
+        source = "the criteria in %s" % args["criteria_range"]
+    else:
+        conditions = args.get("conditions") or []
+        if not conditions:
+            raise CalcError(
+                "'conditions' or 'criteria_range' is required to apply a filter. To "
+                "remove one, call this with operation='clear'."
+            )
+        any_match = (args.get("match") or "all").lower() == "any"
+        entries = [(condition, any_match) for condition in conditions]
+        source = None
+
+    if len(entries) > MAX_FILTER_FIELDS:
         raise CalcError(
-            "'conditions' is required to apply a filter. To remove one, call this "
-            "with operation='clear'."
-        )
+            "Calc accepts at most %d filter conditions at once; %d were given."
+            % (MAX_FILTER_FIELDS, len(entries)))
 
     headers = header_map(sheet, spec, has_header)
-    connection = "OR" if (args.get("match") or "all").lower() == "any" else "AND"
     fields = []
     described = []
-    for index, condition in enumerate(conditions):
+    for index, (condition, starts_group) in enumerate(entries):
         operator = str(condition.get("operator") or "equals").lower()
         if operator not in FILTER_OPERATORS:
             raise CalcError(
@@ -546,10 +664,12 @@ def filter_range(args):
             "com.sun.star.sheet.TableFilterField2",
             Field=offset,
             Operator=_filter_constant(operator),
-            # The first field's Connection is ignored; the rest chain with it.
+            # The first field's Connection is ignored; each later one joins it to
+            # what came before, and AND binds tighter than OR, so marking the
+            # first condition of each group OR gives (a AND b) OR (c AND d).
             Connection=uno_module().Enum(
-                "com.sun.star.sheet.FilterConnection", "AND" if index == 0 else connection
-            ),
+                "com.sun.star.sheet.FilterConnection",
+                "OR" if (index and starts_group) else "AND"),
         )
         if operator in VALUELESS_OPERATORS:
             field.IsNumeric = False
@@ -568,17 +688,45 @@ def filter_range(args):
         letter = convert.index_to_col(spec.start_col + offset)
         raw = str(condition.get("column")).strip()
         label = letter if raw.lower() == letter.lower() else "%s (%s)" % (raw, letter)
-        described.append(
+        joiner = " OR " if (index and starts_group) else (" AND " if index else "")
+        described.append(joiner + (
             "%s %s" % (label, operator) if operator in VALUELESS_OPERATORS
-            else "%s %s %r" % (label, operator, value)
-        )
+            else "%s %s %r" % (label, operator, value)))
+
+    destination = None
+    if args.get("copy_to"):
+        dest_sheet, dest_anchor = resolve_range(
+            doc, args["copy_to"], None, default_to_used=False)
+        descriptor.CopyOutputData = True
+        descriptor.OutputPosition = make_struct(
+            "com.sun.star.table.CellAddress",
+            Sheet=dest_sheet.RangeAddress.Sheet,
+            Column=dest_anchor.start_col, Row=dest_anchor.start_row)
+        destination = (dest_sheet, dest_anchor)
+    if bool_arg(args, "unique_only"):
+        descriptor.SkipDuplicates = True
 
     with undo_step(doc, "Claude: filter %s.%s" % (sheet.Name, spec.name())):
         descriptor.setFilterFields2(tuple(fields))
         rng.filter(descriptor)
 
-    joiner = " AND " if connection == "AND" else " OR "
-    summary = "Filtered %s.%s where %s." % (sheet.Name, spec.name(), joiner.join(described))
+    where = "".join(described)
+    if source:
+        where = "%s (%s)" % (where, source)
+    summary = "Filtered %s.%s where %s." % (sheet.Name, spec.name(), where)
+
+    if destination is not None:
+        dest_sheet, dest_anchor = destination
+        copied = _copied_rows(dest_sheet, dest_anchor, spec)
+        data_rows = max(copied - (1 if has_header else 0), 0)
+        summary += (
+            " Copied %d matching row(s) to %s.%s; the source table is unchanged and "
+            "still shows every row." % (data_rows, dest_sheet.Name,
+                                        convert.cell_name(dest_anchor.start_col,
+                                                          dest_anchor.start_row)))
+        if not data_rows:
+            summary += " Nothing matched -- check the values."
+        return summary
 
     shown = visible_rows(rng)
     if shown is not None:
@@ -594,3 +742,120 @@ def filter_range(args):
         "only what is showing."
     )
     return summary
+
+
+ORIENTATIONS = {"rows": "ROWS", "columns": "COLUMNS"}
+_ROWS_REF = re.compile(r"^\d+(:\d+)?$")
+_COLS_REF = re.compile(r"^[A-Za-z]{1,3}(:[A-Za-z]{1,3})?$")
+
+
+def _outline_target(sheet, raw, orientation):
+    """Parse a rows ('5:10') or columns ('C:F') reference for an outline call."""
+    text = convert.split_sheet(str(raw).strip())[1].replace("$", "")
+    if not orientation:
+        if _ROWS_REF.match(text):
+            orientation = "rows"
+        elif _COLS_REF.match(text):
+            orientation = "columns"
+        else:
+            orientation = "rows"
+    spec = convert.parse_range(text, used_range(sheet))
+    return spec, orientation
+
+
+@tool(
+    "outline",
+    "Group rows or columns so they can be collapsed and expanded from the margin "
+    "(Data > Group and Outline), collapse or expand a group, show everything down "
+    "to a given level, or build the outline automatically from subtotal formulas.",
+    properties={
+        "document": DOCUMENT,
+        "sheet": SHEET,
+        "operation": enum(
+            "What to do. 'auto' derives groups from formulas that total the rows "
+            "above them; 'clear' removes every group on the sheet.",
+            ["group", "ungroup", "collapse", "expand", "show_level", "auto", "clear"],
+        ),
+        "range": string(
+            "Rows as '5:10' (or '7' for one), columns as 'C:F'. For 'auto', the "
+            "whole table, e.g. 'A1:D40'."
+        ),
+        "orientation": enum(
+            "Whether the range means rows or columns. Inferred from the reference "
+            "when omitted.",
+            sorted(ORIENTATIONS),
+        ),
+        "level": integer(
+            "For show_level: 1 shows the least detail, higher numbers reveal more. "
+            "Only meaningful where groups are nested inside one another -- with a "
+            "single level of grouping it changes nothing, and collapse/expand is "
+            "what you want."
+        ),
+    },
+    required=["operation"],
+    title="Group and outline",
+)
+def outline(args):
+    conn, doc, sheet = doc_and_sheet(args)
+    operation = args["operation"]
+    requested = (args.get("orientation") or "").lower() or None
+    if requested and requested not in ORIENTATIONS:
+        raise CalcError("orientation must be 'rows' or 'columns'.")
+
+    if operation == "clear":
+        with undo_step(doc, "Claude: clear outline %s" % sheet.Name):
+            sheet.clearOutline()
+        return "Removed every row and column group from sheet '%s'." % sheet.Name
+
+    if operation == "show_level":
+        level = int_arg(args, "level", 0) or 0
+        if level < 1:
+            raise CalcError("'level' must be 1 or more.")
+        orientation = requested or "rows"
+        with undo_step(doc, "Claude: outline level %d" % level):
+            sheet.showLevel(
+                level, uno_module().Enum(
+                    "com.sun.star.table.TableOrientation", ORIENTATIONS[orientation]))
+        return (
+            "Showing outline level %d for %s on sheet '%s'. (Levels only do "
+            "anything where groups are nested; for a single group use collapse "
+            "and expand.)" % (level, orientation, sheet.Name))
+
+    if not args.get("range"):
+        raise CalcError("'range' is required for %s." % operation)
+    spec, orientation = _outline_target(sheet, args["range"], requested)
+    address = make_struct(
+        "com.sun.star.table.CellRangeAddress",
+        Sheet=sheet.RangeAddress.Sheet,
+        StartColumn=spec.start_col, StartRow=spec.start_row,
+        EndColumn=spec.end_col, EndRow=spec.end_row,
+    )
+    unit = uno_module().Enum(
+        "com.sun.star.table.TableOrientation", ORIENTATIONS[orientation])
+
+    def label():
+        if orientation == "rows":
+            return "rows %d:%d" % (spec.start_row + 1, spec.end_row + 1)
+        return "columns %s:%s" % (convert.index_to_col(spec.start_col),
+                                  convert.index_to_col(spec.end_col))
+
+    with undo_step(doc, "Claude: outline %s %s" % (operation, spec.name())):
+        if operation == "group":
+            sheet.group(address, unit)
+            done = "Grouped %s" % label()
+        elif operation == "ungroup":
+            sheet.ungroup(address, unit)
+            done = "Ungrouped %s" % label()
+        elif operation == "collapse":
+            sheet.hideDetail(address)
+            done = "Collapsed the group covering %s" % label()
+        elif operation == "expand":
+            sheet.showDetail(address)
+            done = "Expanded the group covering %s" % label()
+        elif operation == "auto":
+            sheet.autoOutline(address)
+            done = "Built an outline over %s from its formulas" % spec.name()
+        else:
+            raise CalcError("Unknown operation %r." % operation)
+
+    return "%s on sheet '%s'." % (done, sheet.Name)

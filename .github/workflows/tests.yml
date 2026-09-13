@@ -71,7 +71,7 @@ jobs:
         timeout-minutes: 20
         run: |
           $failed = @()
-          foreach ($suite in @('smoke_calc', 'smoke_extras', 'smoke_filter', 'smoke_course')) {
+          foreach ($suite in @('smoke_calc', 'smoke_extras', 'smoke_filter', 'smoke_course', 'smoke_advanced')) {
             Write-Host "::group::$suite"
             & "${{ steps.lo.outputs.python }}" -u "scripts\$suite.py"
             $code = $LASTEXITCODE
@@ -103,7 +103,7 @@ jobs:
           export DISPLAY=:99
           python3 -u scripts/check-setup.py
           failed=""
-          for suite in smoke_calc smoke_extras smoke_filter smoke_course; do
+          for suite in smoke_calc smoke_extras smoke_filter smoke_course smoke_advanced; do
             echo "::group::$suite"
             python3 -u "scripts/$suite.py" || failed="$failed $suite"
             echo "::endgroup::"

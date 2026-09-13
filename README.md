@@ -1,123 +1,267 @@
-# LibreOffice Calc MCP server
+# LibreOffice Calc for Claude
 
 [![tests](https://github.com/qwidzit/libre-office-sheets-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/qwidzit/libre-office-sheets-mcp/actions/workflows/tests.yml)
 
-An MCP server that lets Claude read and edit a **live** LibreOffice Calc
-spreadsheet. You keep the document open on screen and watch the cells change as
-Claude works.
+This lets Claude work directly in your LibreOffice Calc spreadsheets. You keep
+the spreadsheet open on screen, ask Claude for something in plain English, and
+watch the cells change as it works.
 
-Built for personal use: no dependencies, no build step, no package manager.
+You can ask for things like:
+
+> *Add a Total column that multiplies Quantity by Price, then make the header
+> row bold and fit the columns to their contents.*
+
+> *Sort this by revenue, highest first, keeping the header row where it is.*
+
+> *Highlight anything over budget in red.*
+
+> *Make a chart of sales by region and put it to the right of the table.*
+
+> *Turn column A into a dropdown that only accepts Yes or No.*
+
+> *Show me only the rows for the North region.*
+
+Nothing is sent anywhere unusual: Claude talks to the copy of LibreOffice
+already running on your computer.
+
+---
+
+# Setting it up
+
+**This takes about five minutes and needs no technical knowledge.** There is no
+command line to learn, nothing to compile, and nothing to install beyond
+LibreOffice itself. Every step below is clicking, copying and pasting.
+
+## Before you start
+
+You need two free programs:
+
+- **LibreOffice** — if you don't have it, download it from
+  [libreoffice.org/download](https://www.libreoffice.org/download) and install
+  it with all the default options.
+- **Claude Desktop** — from [claude.ai/download](https://claude.ai/download).
+
+## Step 1 — Download these files
+
+1. Go to the [project page on GitHub](https://github.com/qwidzit/libre-office-sheets-mcp).
+2. Click the green **Code** button, then **Download ZIP**.
+3. Find the downloaded ZIP file (usually in your **Downloads** folder), right-click
+   it, and choose **Extract All…**
+4. When it asks where to put the files, type this exactly:
+
+   ```
+   C:\libreoffice-mcp
+   ```
+
+   and click **Extract**.
+
+> **Check it worked:** open `C:\libreoffice-mcp` and you should see a file called
+> **server.py** and one called **Check setup.bat**. If instead you see a single
+> folder with a long name, open it, select everything inside, and move it up into
+> `C:\libreoffice-mcp` so that `server.py` sits directly in that folder.
+
+## Step 2 — Run the setup check
+
+In `C:\libreoffice-mcp`, **double-click the file called `Check setup.bat`**.
+
+A black window will open and check that everything is in place. You should see
+something ending like this:
 
 ```
-Claude Desktop / Claude Code
-        |  MCP over stdio
-        v
-   server.py            <- run by LibreOffice's own python.exe
-        |  UNO / URP socket on 127.0.0.1:2002
-        v
-   soffice.exe --calc   <- your open spreadsheet
-```
+Everything works. Copy the block below into Claude Desktop's config file
+(Settings > Developer > Edit Config), then restart Claude Desktop.
 
-## Why there is nothing to install
-
-The server talks MCP directly over stdio (newline-delimited JSON-RPC) using only
-the Python standard library, and LibreOffice already ships a Python that has the
-`uno` bindings built in. So you point Claude at LibreOffice's interpreter and the
-server file, and that is the whole install. No `pip`, no virtualenv, no admin
-rights.
-
-## Requirements
-
-- Windows with LibreOffice installed. Every suite runs on each push against a
-  real LibreOffice on both `windows-latest` (26.2) and Ubuntu (24.2), so the
-  Windows paths are exercised rather than assumed. macOS should work too --
-  only the paths differ -- but it is not covered by CI.
-- LibreOffice's bundled Python, normally at
-  `C:\Program Files\LibreOffice\program\python.exe`.
-
-Check it:
-
-```powershell
-& "C:\Program Files\LibreOffice\program\python.exe" -c "import uno; print('ok')"
-```
-
-If that prints `ok`, you are ready.
-
-## Setup
-
-**1. Get the code**
-
-```powershell
-git clone <this repo> C:\Users\YOU\libre-office-sheets-mcp
-```
-
-**2. Verify the setup**
-
-```powershell
-& "C:\Program Files\LibreOffice\program\python.exe" `
-  C:\Users\YOU\libre-office-sheets-mcp\scripts\check-setup.py
-```
-
-This reports the interpreter, whether `uno` imports, where `soffice.exe` is, and
-whether it can reach a running LibreOffice.
-
-**3. Register the server**
-
-*Claude Desktop* -- edit `%APPDATA%\Claude\claude_desktop_config.json` (see
-`claude_desktop_config.example.json`):
-
-```json
 {
   "mcpServers": {
     "libreoffice-calc": {
       "command": "C:\\Program Files\\LibreOffice\\program\\python.exe",
-      "args": ["C:\\Users\\YOU\\libre-office-sheets-mcp\\server.py"]
+      "args": [
+        "C:\\libreoffice-mcp\\server.py"
+      ]
     }
   }
 }
 ```
 
-Restart Claude Desktop.
+**Leave this window open** — you need to copy that block in the next step. To
+copy from a black window: click and drag across the text to select it, then
+press **Ctrl+C**.
 
-*Claude Code*:
+If you get an error instead, skip to [If something goes
+wrong](#if-something-goes-wrong) below.
 
-```powershell
-claude mcp add libreoffice-calc -- `
-  "C:\Program Files\LibreOffice\program\python.exe" `
-  "C:\Users\YOU\libre-office-sheets-mcp\server.py"
+## Step 3 — Tell Claude about it
+
+1. Open **Claude Desktop**.
+2. Open its settings:
+   - **Windows:** click the menu in the top-left, then **File ▸ Settings**
+   - **Mac:** **Claude ▸ Settings** in the menu bar
+3. Go to the **Developer** section and click **Edit Config**.
+4. A folder opens with a file called **claude_desktop_config.json**. Right-click
+   that file and choose **Open with ▸ Notepad**.
+
+Now, what you do depends on what's already in the file:
+
+**If the file is empty, or contains only `{}`** — delete whatever is there and
+paste in the whole block you copied in Step 2.
+
+**If the file already has other things in it**, it will look something like this:
+
+```json
+{
+  "mcpServers": {
+    "something-else": {
+      "command": "..."
+    }
+  }
+}
 ```
 
-**4. Use it**
+In that case, paste only the `"libreoffice-calc": { ... }` part inside the
+existing `mcpServers` section, and put a comma after the entry before it:
 
-Ask Claude something like *"what's in my open spreadsheet?"*. The server connects
-to LibreOffice, starting it if it is not already running. To start it yourself
-first:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\start-libreoffice.ps1
+```json
+{
+  "mcpServers": {
+    "something-else": {
+      "command": "..."
+    },
+    "libreoffice-calc": {
+      "command": "C:\\Program Files\\LibreOffice\\program\\python.exe",
+      "args": ["C:\\libreoffice-mcp\\server.py"]
+    }
+  }
+}
 ```
 
-Already have a spreadsheet open? Run that script anyway -- LibreOffice hands the
-`--accept` flag to the running instance and opens the socket on it, so your
-document stays exactly where it is.
+Save the file (**Ctrl+S**) and close Notepad.
 
-## Tools
+> **The double backslashes are not a mistake.** `C:\\libreoffice-mcp\\server.py`
+> is correct in this file. Single backslashes will stop it working.
+
+## Step 4 — Restart Claude Desktop
+
+Close Claude Desktop completely and open it again. Closing it to the system tray
+is not enough — right-click its icon near the clock and choose **Quit** if it's
+hiding there.
+
+## Step 5 — Try it
+
+Open Claude Desktop and type:
+
+> *What's in my open spreadsheet?*
+
+Claude will start LibreOffice if it isn't already running, and tell you what it
+found. That's it — you're set up.
+
+---
+
+# Using it day to day
+
+**Just describe what you want.** You don't need to know the names of anything in
+this project. "Sort by date", "add up column D", "make the totals bold" all work.
+
+**Your spreadsheet stays open in front of you.** Changes appear live, so you can
+watch and stop Claude if it heads somewhere you didn't intend.
+
+**Nothing is saved until you say so.** Claude's changes are in the open window
+only. Ask it to save, or press **Ctrl+S** yourself. If you close without saving,
+the changes are gone — which is also a handy escape hatch.
+
+**Ctrl+Z works** for undoing what Claude did, with one exception noted below.
+
+**Before anything drastic**, ask Claude to save a copy first — *"save a copy as
+budget-backup.ods before you start"*. Good advice with any tool, not just this one.
+
+## Things worth knowing
+
+**Undo has one gap.** Everything Claude does goes onto LibreOffice's normal undo
+stack, and a whole block of changes undoes in one press of Ctrl+Z. The exception:
+when Claude fills in cells that were *completely empty* beforehand, LibreOffice
+cannot undo that. Note that this is also the case where nothing was lost — the
+cells were empty. Changes that overwrite existing data undo correctly.
+
+**If Claude seems stuck**, look at the LibreOffice window. A dialog box waiting
+for an answer, or a cell still in edit mode with the cursor blinking in it, stops
+LibreOffice responding to anything. Deal with it and ask Claude to try again.
+After a minute Claude will tell you this itself rather than waiting forever.
+
+**Filtering hides rows, it doesn't delete them.** If a table suddenly looks
+short, it may be filtered. Ask Claude to clear the filter.
+
+**Printing and PDFs** use the page setup. If you want a PDF to look right, ask
+for the page setup first — *"set it to landscape, fit to one page wide, and
+repeat the header row"* — and then ask for the PDF.
+
+---
+
+# If something goes wrong
+
+### "Could not find LibreOffice on this computer"
+
+LibreOffice isn't installed, or it's somewhere unusual. Install it from
+[libreoffice.org/download](https://www.libreoffice.org/download) using the
+default options, then run `Check setup.bat` again.
+
+### The black window flashes up and disappears
+
+It's finishing too fast to read. Instead of double-clicking, open the
+`C:\libreoffice-mcp` folder, hold **Shift**, right-click an empty part of the
+folder, choose **Open PowerShell window here** or **Open in Terminal**, and then
+type `.\"Check setup.bat"` and press Enter. The window will stay open.
+
+### Claude says it can't find the spreadsheet tools
+
+Three things to check, in order:
+
+1. Did you fully quit and reopen Claude Desktop after editing the config?
+2. Open `claude_desktop_config.json` again and check the backslashes are doubled
+   (`C:\\libreoffice-mcp\\server.py`, not `C:\libreoffice-mcp\server.py`).
+3. Check that the file `C:\libreoffice-mcp\server.py` really exists at exactly
+   that path.
+
+### "LibreOffice did not respond"
+
+Something in LibreOffice is waiting for you. Switch to the LibreOffice window,
+close any dialog box that's open, press **Escape** to leave any cell you were
+editing, and ask Claude to try again.
+
+### Saving fails
+
+The file is probably already open in another window. Close it and try again. If
+that isn't it, look in the same folder for a hidden file whose name starts with
+`.~lock` and delete it.
+
+### Nothing above helped
+
+Run `Check setup.bat` again and read the whole output — it lists every place it
+looked for LibreOffice, and marks the ones it found with an `[x]`. Claude Desktop
+also keeps logs: press **Windows key + R**, type `%APPDATA%\Claude\logs`, and
+press Enter.
+
+---
+
+# Reference
+
+Everything from here down is detail you don't need for everyday use.
+
+## What Claude can do
 
 | Tool | What it does |
 | --- | --- |
-| `calc_status` | Connection, open documents, sheets and their used ranges. Start here. |
+| `calc_status` | Connection, open documents, sheets and their used ranges. |
 | `open_document` | Open a file, or create a new empty spreadsheet. |
 | `save_document` | Save in place, or save a copy as ods / xlsx / xls / csv / pdf / html. |
-| `read_range` | Read cells as a tab-separated grid, optionally with formulas, optionally only the rows a filter leaves visible. |
-| `write_range` | Write values and formulas. Sizes the block from the data. |
+| `read_range` | Read cells as a grid, optionally with formulas, optionally only visible rows. |
+| `write_range` | Write values and formulas. |
 | `clear_range` | Clear contents, formatting, or both. |
 | `recalculate` | Force formula recalculation. |
-| `fill_cells` | Fill a formula or series down/across, adjusting relative references. |
+| `fill_cells` | Fill a formula or series down or across, adjusting references. |
 | `copy_range` | Copy and paste: everything, values only, formats only, or transposed. |
 | `clean_data` | Remove duplicate rows, or split one column into several. |
 | `create_pivot_table` | Summarise a range by grouping and aggregating fields. |
-| `conditional_format` | Colour cells by their value, by style name or by colour. |
-| `data_validation` | Dropdown lists, number and date ranges, with input and error messages. |
+| `conditional_format` | Colour cells automatically by their value. |
+| `data_validation` | Dropdown lists, number and date limits, input and error messages. |
 | `page_setup` | Print area, orientation, fit-to-page, margins, headers, repeating rows. |
 | `manage_names` | List, create and delete named ranges. |
 | `manage_comments` | Add, read and delete cell comments. |
@@ -125,156 +269,110 @@ document stays exactly where it is.
 | `structure_edit` | Insert or delete rows and columns. |
 | `manage_sheets` | Add, delete, rename, move, copy, activate sheets. |
 | `sort_range` | Multi-key sort, by column letter or header name. |
-| `find_cells` | Find matching cells, with regex support. |
+| `find_cells` | Find matching cells, with regular expressions. |
 | `find_replace` | Replace across a range, a sheet, or the document. |
-| `filter_range` | Filter a table by criteria, clear a filter, or toggle AutoFilter dropdowns. |
-| `format_range` | Named cell styles, font, colours, alignment, wrapping, number formats, borders, merging. |
+| `filter_range` | Filter by criteria, clear a filter, AutoFilter dropdowns, advanced filters. |
+| `outline` | Group rows or columns so they collapse and expand. |
+| `format_range` | Cell styles, font, colours, alignment, number formats, borders, merging. |
 | `size_cells` | Column widths, row heights, fit-to-contents, hide and show. |
 | `freeze_panes` | Freeze header rows and columns. |
-| `create_chart` | Column, bar, line, area, pie, donut, scatter and net charts, with axis titles, legend and data labels. |
-| `run_uno_script` | Escape hatch for raw UNO. Disabled by default -- see below. |
+| `create_chart` | Charts, with titles, axis labels, legend and data labels. |
+| `run_uno_script` | Escape hatch for raw UNO. Disabled unless switched on. |
 
-Ranges accept `B2`, `A1:D20`, `Sheet2.A1:C9`, `A:C` for whole columns, `2:50` for
-whole rows, and named ranges. Omit the range and most tools use the sheet's used
-area.
+Ranges accept `B2`, `A1:D20`, `Sheet2.A1:C9`, `A:C` for whole columns, `2:50`
+for whole rows, and named ranges.
 
-## Things worth knowing
+## How it works
 
-**Formulas work, including multi-argument ones.** Anything starting with `=`
-is entered as a formula -- `IF`, `VLOOKUP`, `SUMIF`, `COUNTIF`, `CONCATENATE`,
-`SUBTOTAL`, nested calls and so on.
+```
+Claude Desktop
+        |  MCP over stdio
+        v
+   server.py            <- run by LibreOffice's own python.exe
+        |  UNO socket on 127.0.0.1:2002
+        v
+   soffice.exe --calc   <- your open spreadsheet
+```
 
-**Formula argument separators are handled for you.** LibreOffice's API grammar
-separates arguments with `;`, and a comma-separated call like
-`=DATE(2026,3,15)` does not raise an error there -- it silently evaluates to
-`#NAME?`. `write_range` rewrites commas to semicolons outside string literals,
-so both styles work, and it tells you when it did. After writing formulas it
-recalculates and reports any cells that ended up as `#REF!`, `#NAME?`,
-`#DIV/0!` and so on, rather than leaving you to notice.
+There is nothing to install because the server speaks MCP directly using only
+Python's standard library, and LibreOffice already ships a Python with the UNO
+bindings built in. So Claude runs LibreOffice's own interpreter against
+`server.py`, and that is the entire installation.
 
-**Filling adjusts references, which is the point.** `fill_cells` is the fill
-handle: write `=B2*C2` once in `D2`, fill through `D50`, and each row gets
-`=B3*C3`, `=B4*C4` and so on -- relative and absolute (`$A$1`) references behave
-exactly as Calc's own fill does. It also continues series: `1, 3, 5...` from a
-step, or `Jan, Feb, Mar` from a single seed. `copy_range` covers paste special:
-`all` adjusts references and brings formatting, `values` drops the formulas and
-keeps the results, `formats` paints the styling across without touching content,
-and `transpose` flips rows and columns.
+## Notes for the curious
 
-**Protection is the usual worksheet pattern.** Cells are locked by default, so
-`protect_sheet` with `unlock_cells` on the answer cells, then `protect`, gives a
-sheet where only the intended cells can be typed into. Writes to locked cells
-then fail with a clear error rather than silently doing nothing.
+**Formula separators are handled for you.** LibreOffice's programming interface
+separates arguments with `;`, and a comma-separated call like `=DATE(2026,3,15)`
+doesn't fail there — it silently evaluates to `#NAME?`. Commas outside quoted
+text are rewritten before writing, and any cell that ends up as an error is
+reported back rather than left to be discovered later.
 
-**Page setup also governs PDF export.** `save_document` to a `.pdf` uses whatever
-the sheet's page style says, so set the print area, orientation and
-fit-to-pages first if the output matters.
+**Advanced filters** work two ways: a list of conditions, or a criteria block
+laid out the way Calc's own Advanced Filter dialog expects (a header row, then
+one row per set of conditions, ANDed across a row and ORed between rows). Either
+can copy the matching rows somewhere else instead of hiding the rest, and can
+drop duplicates. The criteria block is parsed by this project, because
+LibreOffice does not expose that part through its API.
 
-**Filtering hides rows, it does not delete them.** `filter_range` applies
-criteria (`Qty > 5`, `Region equals North`, `Item begins_with B`, `top_values 3`,
-`empty` ...), combines them with `match: "all"` or `"any"`, and reports how many
-rows are left showing. `read_range` with `visible_only: true` then reads back
-exactly what the user sees, keeping the sheet's real row numbers, so a filtered
-table reads back as `2 4 5 6` rather than being silently renumbered. A plain
-`read_range` still returns every row, and `calc_status` marks a filtered sheet so
-neither of you is misled by the window showing fewer rows than the data holds.
-`operation: "show_dropdowns"` turns on Calc's AutoFilter arrows so you can carry
-on filtering by hand afterwards.
+**Outline levels** only do something where groups are nested inside one another.
+For a single level of grouping, collapse and expand are what you want.
 
-Formulas see filters the way Calc does: `SUM` covers every row, `SUBTOTAL(109,...)`
-only the visible ones.
+**Not covered:** images and shapes, macros, hyperlinks, Goal Seek. Sparklines
+are impossible rather than merely absent — LibreOffice does not expose them
+through its API at all.
 
-**Undo mostly works, with one documented gap.** Every change goes onto
-LibreOffice's own undo stack and a whole written block is a single Ctrl+Z. The
-exception, measured on LibreOffice 24.2: a bulk write into cells that were
-*empty* beforehand cannot be undone -- the undo entry is consumed but the
-content stays. Overwriting cells that already held data undoes correctly, as do
-clears, formatting, row and column edits, sorting, replace and every sheet
-operation. So the case that will not undo is also the case where nothing was
-lost. Even so, `save_document` to a copy before anything sweeping.
+## Settings
 
-The server deliberately does **not** wrap operations in UNO undo contexts:
-grouping them looks tidier in the undo list but breaks undo altogether, because
-`undo()` pops the composite entry without reverting what is inside it.
-
-**Nothing is written to disk until you save.** Edits are live in the open
-window but the file on disk is untouched until `save_document`.
-
-**Dates come back as dates.** Calc stores dates as serial numbers. `read_range`
-checks each column's number format and converts date-formatted columns using the
-document's null date, including dates produced by formulas.
-
-## Configuration
-
-All optional, set in the `env` block of the MCP config:
+All optional, in the `env` section of the Claude Desktop config entry:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `LOCALC_MCP_PORT` | `2002` | UNO socket port. |
-| `LOCALC_MCP_HOST` | `127.0.0.1` | UNO socket host. |
-| `LOCALC_MCP_AUTOLAUNCH` | `1` | Start LibreOffice if it is not reachable. |
-| `LOCALC_MCP_LAUNCH_TIMEOUT` | `45` | Seconds to wait for a launched instance. |
+| `LOCALC_MCP_PORT` | `2002` | Port LibreOffice listens on. |
+| `LOCALC_MCP_HOST` | `127.0.0.1` | Host LibreOffice listens on. |
+| `LOCALC_MCP_AUTOLAUNCH` | `1` | Start LibreOffice if it isn't running. |
+| `LOCALC_MCP_LAUNCH_TIMEOUT` | `45` | Seconds to wait for it to start. |
+| `LOCALC_MCP_TIMEOUT` | `60` | Seconds before reporting LibreOffice as unresponsive. |
 | `LOCALC_MCP_SOFFICE` | auto | Full path to `soffice.exe`. |
-| `LOCALC_MCP_TIMEOUT` | `60` | Seconds to wait for a call before reporting LibreOffice as unresponsive. |
+| `LOCALC_MCP_PYTHON` | auto | Full path to the Python used to start the server. |
 | `LOCALC_MCP_ENABLE_EXEC` | `0` | Set to `1` to enable `run_uno_script`. |
 
-`run_uno_script` executes arbitrary Python against your open documents. It is
-off by default and only worth enabling when you want Claude to reach a corner of
-the UNO API the other tools do not cover.
+`run_uno_script` runs arbitrary Python against your open documents. It is off by
+default and only worth switching on if you want Claude to reach a corner of
+LibreOffice the other tools don't cover.
 
-## Troubleshooting
+## Other platforms
 
-**"Could not import the 'uno' module"** -- the server is being run by the wrong
-Python. The `command` must be LibreOffice's own `python.exe`.
+macOS and Linux work the same way; only the paths differ. Point the config at
+LibreOffice's Python — `/Applications/LibreOffice.app/Contents/Resources/python`
+on macOS, or a system `python3` with `python3-uno` installed on Linux — and at
+`server.py`. Run `scripts/check-setup.py` with that interpreter to confirm, and
+it will print the config to use. The `.bat` files are Windows-only; on other
+systems run the scripts directly.
 
-**"Could not reach LibreOffice"** -- LibreOffice is running without a UNO
-socket. Run `scripts\start-libreoffice.ps1`, or set `LOCALC_MCP_AUTOLAUNCH=1`.
+## Running the tests
 
-**Saving fails with an IO error** -- the target file is usually already open in
-another window, or a `.~lock.<name>#` file is stranded next to it.
+Every suite runs in CI on each push, against a real LibreOffice on both Windows
+and Linux. To run them yourself, use LibreOffice's Python:
 
-**"LibreOffice did not respond"** -- something modal is open in LibreOffice and
-is blocking it. UNO calls are serviced on the main thread, so a dialog box, or
-a cell left in edit mode, stops every one of them. Deal with it in the
-LibreOffice window and try again. The server gives up after 60 seconds rather
-than waiting forever; raise `LOCALC_MCP_TIMEOUT` if an operation is genuinely
-that slow.
-
-**Nothing happens / the server will not start** -- Claude Desktop keeps MCP
-server logs under `%APPDATA%\Claude\logs\`. The server writes diagnostics to
-stderr, which land there.
-
-## Tests
-
-Everything below runs in CI on Windows and Linux on every push; the badge at
-the top reports the last run.
-
-`scripts/smoke_protocol.py` checks the MCP wire protocol on its own -- no
-LibreOffice needed:
-
-```powershell
-& "C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_protocol.py
+```
+"C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_protocol.py
+"C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_calc.py
+"C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_extras.py
+"C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_filter.py
+"C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_course.py
+"C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_advanced.py
 ```
 
-Four further suites drive the server end to end against a live LibreOffice --
-`smoke_calc.py` (reading, writing, formulas, formatting, sorting, charts,
-saving), `smoke_extras.py` (dates, undo, file round trips), `smoke_filter.py`
-(filtering and formula handling) and `smoke_course.py` (filling, paste special,
-duplicates, text to columns, names, conditional formatting, validation, page
-setup, comments, pivot tables, styles and protection). They need LibreOffice
-listening on the UNO socket, and they create and close their own documents.
-
-```powershell
-& "C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_calc.py
-& "C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_extras.py
-& "C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_filter.py
-& "C:\Program Files\LibreOffice\program\python.exe" scripts\smoke_course.py
-```
+`smoke_protocol.py` checks the MCP wire protocol on its own and needs no
+LibreOffice. The rest drive the server against a running LibreOffice and create
+their own documents.
 
 ## Layout
 
 ```
 server.py              entry point
+Check setup.bat        double-click to verify the setup
+Start LibreOffice.bat  double-click to open Calc with the connection enabled
 locmcp/
   jsonrpc.py           newline-delimited JSON-RPC over stdio
   protocol.py          MCP initialize / tools/list / tools/call
@@ -286,7 +384,7 @@ locmcp/
     data.py            fill, copy/paste special, clean, pivot tables
     document.py        conditional formatting, validation, page setup, names,
                        comments, protection
-    edit.py            rows and columns, sheets, sort, filter, find, replace
+    edit.py            rows and columns, sheets, sort, filter, outline, search
     style.py           formatting, sizing, freeze, charts, raw UNO
 scripts/               setup check, launcher, test suites
 ```

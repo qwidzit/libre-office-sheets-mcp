@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Diagnose a LibreOffice Calc MCP setup. Run it with LibreOffice's own Python:
+"""Diagnose a LibreOffice Calc MCP setup, and print the config to paste into
+Claude Desktop. Run it with LibreOffice's own Python:
 
     "C:\\Program Files\\LibreOffice\\program\\python.exe" scripts\\check-setup.py
 """
 
+import json
 import os
 import sys
 
@@ -63,4 +65,19 @@ from locmcp import tools  # noqa: F401,E402  (registers the tools)
 from locmcp.registry import all_tools  # noqa: E402
 
 print("tools       : %d registered" % len(all_tools()))
-print("\nSetup looks good.")
+
+print("\n" + "=" * 68)
+print("Everything works. Copy the block below into Claude Desktop's config file")
+print("(Settings > Developer > Edit Config), then restart Claude Desktop.")
+print("=" * 68 + "\n")
+print(json.dumps({
+    "mcpServers": {
+        "libreoffice-calc": {
+            "command": sys.executable,
+            "args": [os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "server.py")],
+        }
+    }
+}, indent=2))
+print()
