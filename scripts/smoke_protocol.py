@@ -150,6 +150,25 @@ def main():
     check("describe_exception copes with an empty message",
           describe_exception(ValueError()) == "ValueError")
 
+    # The interpreter named in the config Claude Desktop is given has to exist,
+    # or it answers "its command wasn't found" and nothing here ever runs.
+    from locmcp.bridge import _is_disposed
+
+    interpreter = find_interpreter()
+    check("find_interpreter returns a real file",
+          os.path.isfile(interpreter), interpreter)
+
+    # LibreOffice dying mid-call is not always a DisposedException.
+    class Bridge(RuntimeError):
+        pass
+
+    check("a disposed bridge is recognised by message",
+          _is_disposed(Bridge("Binary URP bridge disposed during call")))
+    check("a DisposedException is recognised by name",
+          _is_disposed(type("DisposedException", (Exception,), {})()))
+    check("an ordinary error is not mistaken for a disposal",
+          not _is_disposed(ValueError("no sheet named 'x'")))
+
     print("\n%s" % ("ALL PROTOCOL CHECKS PASSED" if not failures else "FAILURES: %s" % failures))
     return 1 if failures else 0
 

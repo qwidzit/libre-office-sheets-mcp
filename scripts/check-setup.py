@@ -70,10 +70,17 @@ print("\n" + "=" * 68)
 print("Everything works. Copy the block below into Claude Desktop's config file")
 print("(Settings > Developer > Edit Config), then restart Claude Desktop.")
 print("=" * 68 + "\n")
+command = bridge.find_interpreter()
+if not os.path.isfile(command):
+    print("PROBLEM: %r is not a file, so Claude Desktop could not launch it.\n"
+          "Set LOCALC_MCP_PYTHON to LibreOffice's python.exe and run this again."
+          % command)
+    sys.exit(1)
+
 print(json.dumps({
     "mcpServers": {
         "libreoffice-calc": {
-            "command": sys.executable,
+            "command": command,
             "args": [os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                 "server.py")],

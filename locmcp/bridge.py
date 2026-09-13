@@ -102,13 +102,18 @@ def find_interpreter():
         return override
 
     names = ("python.exe",) if os.name == "nt" else ("python3", "python")
-    for directory in interpreter_dirs():
-        for name in names:
+    directories = interpreter_dirs()
+    # Every directory is tried for a plain interpreter before any of them is
+    # tried for one in bin/, so the program/ wrapper wins over the inner
+    # python-core/bin/python.exe that sets up none of the UNO environment.
+    for name in names:
+        for directory in directories:
             candidate = os.path.join(directory, name)
             if os.path.isfile(candidate):
                 return candidate
-        for sub in ("bin", "Scripts"):
-            for name in names:
+    for sub in ("bin", "Scripts"):
+        for name in names:
+            for directory in directories:
                 candidate = os.path.join(directory, sub, name)
                 if os.path.isfile(candidate):
                     return candidate
@@ -302,8 +307,30 @@ def connect(allow_launch=True):
     )
 
 
+# What LibreOffice going away actually looks like. It is not always a
+# DisposedException: dying mid-call raises a plain RuntimeException reading
+# "Binary URP bridge disposed during call", and matching only the class name
+# meant the reconnect never fired for the commonest case of all.
+_DISPOSED_MARKERS = (
+    "disposedexception",
+    "bridge disposed",
+    "urp bridge",
+    "connection has been closed",
+    "connection closed",
+)
+
+
 def _is_disposed(exc):
-    return "DisposedException" in type(exc).__name__ or "DisposedException" in repr(exc)
+    try:
+        name = type(exc).__name__.lower()
+    except Exception:
+        name = ""
+    try:
+        message = str(exc).lower()
+    except Exception:
+        message = ""
+    haystack = "%s %s" % (name, message)
+    return any(marker in haystack for marker in _DISPOSED_MARKERS)
 
 
 def with_reconnect(fn):
