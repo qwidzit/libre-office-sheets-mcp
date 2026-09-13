@@ -69,8 +69,12 @@ def main():
     ok, text = client.call("save_document", path=path)
     step("save to .ods", ok and os.path.exists(path), text, quiet=True)
 
+    # Closing a document can take the UNO bridge down with it, which shows up as
+    # a disposed-bridge error rather than a clean result. What matters is that
+    # the document really closed, and the reopen below is what proves it.
     ok, text = client.call("run_uno_script", code="doc.setModified(False); doc.close(False)")
-    step("close the document", ok, text, quiet=True)
+    step("close the document (the bridge may drop with it)",
+         ok or "dispose" in text.lower(), text, quiet=True)
 
     ok, text = client.call("open_document", path=path)
     step("reopen the saved file", ok, text, expect="Data")

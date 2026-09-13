@@ -2,10 +2,12 @@
 
 import os
 import threading
-import traceback
 
 from . import __version__, registry
-from .jsonrpc import INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, log
+from .jsonrpc import (
+    INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, describe_exception, log,
+    safe_traceback,
+)
 
 # Revisions reachable through the `initialize` handshake, oldest to newest.
 HANDSHAKE_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
@@ -77,9 +79,10 @@ def _tools_call(params):
         is_error = False
     except Exception as exc:
         # Tool-level failures belong in the result so the model can self-correct;
-        # only protocol-level problems become JSON-RPC errors.
-        log("tool %s failed: %s" % (name, traceback.format_exc()))
-        text = "%s: %s" % (type(exc).__name__, exc)
+        # only protocol-level problems become JSON-RPC errors. Describing the
+        # failure must not be able to fail, or the result is the opposite.
+        log("tool %s failed: %s" % (name, safe_traceback()))
+        text = describe_exception(exc)
         is_error = True
 
     return {"content": [{"type": "text", "text": text}], "isError": is_error}

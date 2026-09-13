@@ -43,6 +43,34 @@ def log(message):
     sys.stderr.flush()
 
 
+def describe_exception(exc):
+    """Render an exception without risking a second failure.
+
+    A UNO exception whose bridge has died cannot always be described: pyuno
+    builds those classes dynamically, and reading __module__ or __name__ off one
+    raises AttributeError. That turned reporting a tool failure into a protocol
+    error, losing the original problem entirely.
+    """
+    try:
+        name = type(exc).__name__
+    except Exception:
+        name = "Error"
+    try:
+        message = str(exc)
+    except Exception:
+        message = ""
+    return "%s: %s" % (name, message) if message else name
+
+
+def safe_traceback():
+    """format_exc() reads the exception's class too, so it can fail the same way."""
+    import traceback
+    try:
+        return traceback.format_exc()
+    except Exception:
+        return "<traceback unavailable>"
+
+
 def _binary(stream):
     return getattr(stream, "buffer", stream)
 
@@ -100,9 +128,10 @@ class Server:
                 self._respond_error(request_id, exc)
             return
         except Exception as exc:  # pragma: no cover - defensive
-            log("unhandled error in %s: %r" % (method, exc))
+            log("unhandled error in %s: %s" % (method, safe_traceback()))
             if request_id is not None:
-                self._respond_error(request_id, RpcError(INTERNAL_ERROR, str(exc)))
+                self._respond_error(
+                    request_id, RpcError(INTERNAL_ERROR, describe_exception(exc)))
             return
 
         if request_id is not None:

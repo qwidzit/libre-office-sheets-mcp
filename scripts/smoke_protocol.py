@@ -130,6 +130,26 @@ def main():
     check("uno_get treats None as absent", uno_get(Fine(), "Empty", "fallback") == "fallback")
     check("uno_get handles a missing name", uno_get(Fine(), "Nope", "fallback") == "fallback")
 
+    # A UNO exception whose bridge has died refuses to describe itself, and the
+    # code reporting the failure must not fail in turn.
+    from locmcp.jsonrpc import describe_exception
+
+    class Unnameable(type):
+        @property
+        def __name__(cls):
+            raise AttributeError("__module__")
+
+    class Undescribable(Exception, metaclass=Unnameable):
+        def __str__(self):
+            raise RuntimeError("cannot render this either")
+
+    check("describe_exception survives an exception that cannot be named",
+          describe_exception(Undescribable()) == "Error")
+    check("describe_exception renders an ordinary exception",
+          describe_exception(ValueError("bad range")) == "ValueError: bad range")
+    check("describe_exception copes with an empty message",
+          describe_exception(ValueError()) == "ValueError")
+
     print("\n%s" % ("ALL PROTOCOL CHECKS PASSED" if not failures else "FAILURES: %s" % failures))
     return 1 if failures else 0
 
