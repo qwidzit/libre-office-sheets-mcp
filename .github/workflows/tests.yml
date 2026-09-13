@@ -52,6 +52,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "python.exe cannot import uno" }
           "python=$python" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      # The file a person actually double-clicks. It has to find LibreOffice on
+      # its own, so run it before anything hands it a path.
+      - name: Check setup.bat (what a user double-clicks)
+        shell: cmd
+        env:
+          LOCALC_NO_PAUSE: "1"
+        run: call "Check setup.bat"
+
       # Prints interpreter facts and the soffice candidate list, then exercises
       # discovery, the detached launch and the UNO connection. First, so its
       # diagnostics are on record even when a later step fails.
