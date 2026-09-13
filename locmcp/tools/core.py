@@ -5,7 +5,8 @@ import os
 from .. import convert
 from ..bridge import (
     CalcError, calc_documents, cell_range, doc_label, doc_path, null_date, prop,
-    set_active_document, to_file_url, undo_step, visible_rows, with_reconnect,
+    set_active_document, to_file_url, undo_step, uno_get, visible_rows,
+    with_reconnect,
 )
 from ..registry import DOCUMENT, SHEET, array, boolean, enum, integer, string, tool
 from .base import bool_arg, check_size, describe_used, doc_only, int_arg, target
@@ -147,7 +148,7 @@ def save_document(args):
     fmt = args.get("format")
 
     if not path:
-        if not getattr(doc, "URL", ""):
+        if not uno_get(doc, "URL", ""):
             raise CalcError(
                 "This document has never been saved, so it has no path. Call "
                 "save_document again with an explicit 'path'."

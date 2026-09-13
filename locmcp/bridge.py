@@ -323,6 +323,21 @@ def with_reconnect(fn):
 
 # --- documents ---------------------------------------------------------------
 
+def uno_get(obj, name, default=None):
+    """Read a UNO property, falling back rather than raising.
+
+    getattr's default does not cover this: pyuno raises UnknownPropertyException
+    when an object does not expose a property, and that is not AttributeError,
+    so the default is never reached. A proxy for a document that is closing can
+    also refuse a property it answered a moment earlier.
+    """
+    try:
+        value = getattr(obj, name)
+    except Exception:
+        return default
+    return default if value is None else value
+
+
 def calc_documents(conn):
     docs = []
     enum = conn.desktop.getComponents().createEnumeration()
@@ -337,7 +352,7 @@ def calc_documents(conn):
 
 
 def doc_path(doc):
-    url = getattr(doc, "URL", "") or ""
+    url = uno_get(doc, "URL", "")
     if not url:
         return ""
     try:
@@ -351,14 +366,14 @@ def doc_label(doc):
     if path:
         return os.path.basename(path)
     try:
-        return doc.getTitle()
+        return doc.getTitle() or "Untitled"
     except Exception:
         return "Untitled"
 
 
 def set_active_document(doc):
     global _active_doc_hint
-    _active_doc_hint = getattr(doc, "URL", "") or doc_label(doc)
+    _active_doc_hint = uno_get(doc, "URL", "") or doc_label(doc)
 
 
 def resolve_document(conn, selector=None):
@@ -401,7 +416,7 @@ def resolve_document(conn, selector=None):
 
     if _active_doc_hint:
         for d in docs:
-            if (getattr(d, "URL", "") or doc_label(d)) == _active_doc_hint:
+            if (uno_get(d, "URL", "") or doc_label(d)) == _active_doc_hint:
                 return d
 
     try:

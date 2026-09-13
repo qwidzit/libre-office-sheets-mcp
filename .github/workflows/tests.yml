@@ -70,15 +70,15 @@ jobs:
         shell: pwsh
         timeout-minutes: 20
         run: |
-          $failed = @()
           foreach ($suite in @('smoke_calc', 'smoke_extras', 'smoke_filter', 'smoke_course', 'smoke_advanced')) {
             Write-Host "::group::$suite"
             & "${{ steps.lo.outputs.python }}" -u "scripts\$suite.py"
             $code = $LASTEXITCODE
             Write-Host "::endgroup::"
-            if ($code -ne 0) { $failed += $suite }
+            # Stop here rather than carrying on: the failing suite's output is
+            # then the last thing in the log, where it can actually be read.
+            if ($code -ne 0) { throw "suite failed: $suite" }
           }
-          if ($failed.Count -gt 0) { throw "failing suites: $($failed -join ', ')" }
 
   linux:
     name: Linux (system Python + uno)
@@ -102,10 +102,8 @@ jobs:
           sleep 3
           export DISPLAY=:99
           python3 -u scripts/check-setup.py
-          failed=""
           for suite in smoke_calc smoke_extras smoke_filter smoke_course smoke_advanced; do
             echo "::group::$suite"
-            python3 -u "scripts/$suite.py" || failed="$failed $suite"
+            python3 -u "scripts/$suite.py" || { echo "suite failed: $suite"; exit 1; }
             echo "::endgroup::"
           done
-          if [ -n "$failed" ]; then echo "failing suites:$failed"; exit 1; fi

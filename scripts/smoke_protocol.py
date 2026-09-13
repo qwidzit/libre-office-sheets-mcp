@@ -110,6 +110,26 @@ def main():
 
     proc.stdin.close()
     proc.wait(timeout=10)
+
+    # Reading a property off a UNO object cannot rely on getattr's default:
+    # pyuno raises UnknownPropertyException, which is not AttributeError, and a
+    # proxy for a closing document can refuse a property it answered before.
+    from locmcp.bridge import uno_get
+
+    class Hostile(object):
+        @property
+        def URL(self):
+            raise RuntimeError("cannot get value URL")
+
+    class Fine(object):
+        URL = "file:///x.ods"
+        Empty = None
+
+    check("uno_get survives a property that raises", uno_get(Hostile(), "URL", "") == "")
+    check("uno_get returns a real value", uno_get(Fine(), "URL", "") == "file:///x.ods")
+    check("uno_get treats None as absent", uno_get(Fine(), "Empty", "fallback") == "fallback")
+    check("uno_get handles a missing name", uno_get(Fine(), "Nope", "fallback") == "fallback")
+
     print("\n%s" % ("ALL PROTOCOL CHECKS PASSED" if not failures else "FAILURES: %s" % failures))
     return 1 if failures else 0
 
