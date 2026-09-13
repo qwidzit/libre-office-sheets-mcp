@@ -169,6 +169,25 @@ def main():
     check("an ordinary error is not mistaken for a disposal",
           not _is_disposed(ValueError("no sheet named 'x'")))
 
+    # Message matching alone is not enough -- LibreOffice dying mid-call reports
+    # whatever it was doing at the time. The retry asks the connection instead.
+    from locmcp.bridge import _connection_alive
+
+    class Live(object):
+        class desktop(object):
+            @staticmethod
+            def getComponents():
+                return ()
+
+    class Dead(object):
+        class desktop(object):
+            @staticmethod
+            def getComponents():
+                raise RuntimeError("illegal object given!")
+
+    check("a working connection is seen as alive", _connection_alive(Live()))
+    check("a broken connection is seen as dead", not _connection_alive(Dead()))
+
     print("\n%s" % ("ALL PROTOCOL CHECKS PASSED" if not failures else "FAILURES: %s" % failures))
     return 1 if failures else 0
 

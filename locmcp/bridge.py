@@ -333,17 +333,35 @@ def _is_disposed(exc):
     return any(marker in haystack for marker in _DISPOSED_MARKERS)
 
 
-def with_reconnect(fn):
-    """Run fn(connection), reconnecting once if the bridge has gone stale."""
-    global _connection
+def _connection_alive(conn):
+    """Is this connection still usable? Cheapest possible round trip."""
     try:
-        return fn(connect())
+        conn.desktop.getComponents()
+        return True
+    except Exception:
+        return False
+
+
+def with_reconnect(fn):
+    """Run fn(connection), reconnecting once if LibreOffice has gone away.
+
+    LibreOffice dying mid-call surfaces as whatever UNO happened to be doing at
+    the time: "Binary URP bridge disposed during call", "illegal object given!",
+    "cannot get value URL" -- all different, all the same underlying event. So
+    rather than recognising messages, ask the connection whether it still works.
+    If it does, the error was real and belongs to the caller; if it does not,
+    reconnect and run the operation again.
+    """
+    global _connection
+    conn = connect()
+    try:
+        return fn(conn)
     except CalcError:
         raise
     except Exception as exc:
-        if not _is_disposed(exc):
+        if not (_is_disposed(exc) or not _connection_alive(conn)):
             raise
-        log("UNO bridge disposed; reconnecting")
+        log("LibreOffice is gone; reconnecting and retrying")
         _connection = None
         return fn(connect())
 
